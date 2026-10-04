@@ -30,6 +30,23 @@ Phần mềm chuyên biệt dành cho bác sĩ Tai Mũi Họng & phẫu thuật 
 
 ---
 
+## 🌐 Cách Xem & Chạy Trực Tiếp Trên GitHub (Không Cần Cài Đặt)
+
+### Cách 1: Bật GitHub Pages (Chạy như một trang web công khai)
+Dự án đã được cấu hình sẵn **GitHub Actions** tự động deploy:
+1. Đẩy code lên GitHub.
+2. Trên trang GitHub repo, vào **Settings** -> **Pages**.
+3. Tại mục **Build and deployment** -> **Source**, chọn **GitHub Actions**.
+4. GitHub sẽ tự động build và cung cấp cho bạn một link chạy trực tiếp dạng:  
+   `https://<tên-user-github>.github.io/<tên-repo>/`
+
+### Cách 2: Chạy trực tiếp qua GitHub Codespaces (Dành cho nhà phát triển)
+1. Trong trang repo GitHub của bạn, bấm nút **Code** màu xanh -> chọn tab **Codespaces** -> bấm **"Create codespace on main"** (hoặc chỉ cần gõ phím `.` trên bàn phím).
+2. GitHub sẽ mở một giao diện lập trình trực tiếp trên trình duyệt.
+3. Chạy `npm run dev` trong terminal tích hợp, GitHub sẽ mở port xem thử ứng dụng ngay lập tức!
+
+---
+
 ## 🚀 Cài Đặt & Chạy Trên Máy Cá Nhân
 
 ### Yêu cầu môi trường
