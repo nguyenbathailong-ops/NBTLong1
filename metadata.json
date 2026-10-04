@@ -1,0 +1,8 @@
+{
+  "name": "Remix RHINOLOG - Sổ tay lâm sàng \u0026 Nghiên cứu Mũi Xoang Offline",
+  "description": "Phần mềm nhập liệu lâm sàng, phẫu thuật mũi xoang, đối soát dữ liệu và phân tích đa biến số nghiên cứu y học, hỗ trợ Web và Android Offline PWA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
