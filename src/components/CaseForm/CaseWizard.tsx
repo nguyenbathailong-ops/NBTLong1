@@ -8,6 +8,8 @@ import { StepPostOp } from './StepPostOp';
 import { StepImages } from './StepImages';
 import { auditSingleCase } from '../../utils/validationAudit';
 import { db } from '../../db/indexedDB';
+import { useFirebaseSync } from '../../contexts/FirebaseContext';
+import { pushCaseToCloud } from '../../services/cloudSync';
 import { Check, HelpCircle, ArrowLeft, ArrowRight, Save, X } from 'lucide-react';
 
 interface CaseWizardProps {
@@ -21,6 +23,7 @@ export const CaseWizard: React.FC<CaseWizardProps> = ({
   onSave,
   onCancel,
 }) => {
+  const { user, workspace } = useFirebaseSync();
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [caseData, setCaseData] = useState<PatientCase>({ ...initialCase });
   const [showHelpModal, setShowHelpModal] = useState<boolean>(false);
@@ -74,6 +77,7 @@ export const CaseWizard: React.FC<CaseWizardProps> = ({
     const updatedCase: PatientCase = {
       ...caseData,
       updatedAt: Date.now(),
+      syncedToCloud: false,
       auditStatus: {
         completionPercentage: audit.completionPercentage,
         hasInconsistencies: audit.inconsistencyCount > 0,
@@ -84,9 +88,21 @@ export const CaseWizard: React.FC<CaseWizardProps> = ({
       },
     };
 
-    // Save to IndexedDB
+    // Save locally to IndexedDB first (instant offline-first)
     await db.cases.put(updatedCase);
-    setSaveSuccessMsg('✓ Đã lưu hồ sơ thành công vào cơ sở dữ liệu nội tuyến!');
+
+    let msg = '✓ Đã lưu hồ sơ vào bộ nhớ thiết bị!';
+    if (user && navigator.onLine) {
+      await pushCaseToCloud(user, updatedCase, workspace);
+      updatedCase.syncedToCloud = true;
+      msg = workspace
+        ? `✓ Đã lưu & đồng bộ lên Kho chung "${workspace.name}"!`
+        : '✓ Đã lưu hồ sơ và đồng bộ tự động lên Cloud!';
+    } else if (user) {
+      msg = '✓ Đã lưu ngoại tuyến. Sẽ tự động đồng bộ lên Cloud khi có mạng!';
+    }
+
+    setSaveSuccessMsg(msg);
     setTimeout(() => {
       onSave(updatedCase);
     }, 400);

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { PatientCase } from './types/medical';
 import { db, initializeDatabase, createBlankCase } from './db/indexedDB';
 import { Header } from './components/Header';
@@ -15,13 +15,20 @@ import { ClinicalKnowledge } from './components/ClinicalKnowledge';
 import { CaseWizard } from './components/CaseForm/CaseWizard';
 import { CaseDetailModal } from './components/CaseDetailModal';
 import { DataBackupModal } from './components/DataBackupModal';
+import { FirebaseProvider, useFirebaseSync } from './contexts/FirebaseContext';
+import { softDeleteCaseOnCloud } from './services/cloudSync';
 import { useOnlineStatus } from './hooks/usePWAInstall';
 import { auditSingleCase } from './utils/validationAudit';
-import { WifiOff, Plus, HelpCircle, X, ShieldAlert } from 'lucide-react';
+import { WifiOff, Plus, HelpCircle, X } from 'lucide-react';
 
-export default function App() {
-  const [cases, setCases] = useState<PatientCase[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+interface AppContentProps {
+  cases: PatientCase[];
+  loading: boolean;
+  reloadCases: () => Promise<void>;
+}
+
+function AppContent({ cases, loading, reloadCases }: AppContentProps) {
+  const { user, workspace } = useFirebaseSync();
   const [currentTab, setCurrentTab] = useState<
     'dashboard' | 'cases' | 'reconciliation' | 'analytics' | 'knowledge' | 'security'
   >('dashboard');
@@ -34,25 +41,6 @@ export default function App() {
 
   const isOnline = useOnlineStatus();
 
-  // Load cases from IndexedDB
-  const reloadCases = async () => {
-    try {
-      await initializeDatabase();
-      const all = await db.cases.toArray();
-      // Sort newest first
-      all.sort((a, b) => b.updatedAt - a.updatedAt);
-      setCases(all);
-    } catch (e) {
-      console.error('Error loading cases:', e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    reloadCases();
-  }, []);
-
   // Calculate total audit issues count for badge
   const totalIssuesCount = cases.reduce((acc, curr) => {
     const audit = auditSingleCase(curr);
@@ -64,16 +52,20 @@ export default function App() {
     setEditingCase(blank);
   };
 
-  const handleEditCase = (c: PatientCase, initialStep?: number) => {
+  const handleEditCase = (c: PatientCase) => {
     setEditingCase(c);
   };
 
   const handleDeleteCase = async (id: string) => {
     await db.cases.delete(id);
+    await db.deletedCases.put({ id, deletedAt: Date.now() });
+    if (user && navigator.onLine) {
+      await softDeleteCaseOnCloud(user, id, workspace);
+    }
     await reloadCases();
   };
 
-  const handleSaveCase = async (saved: PatientCase) => {
+  const handleSaveCase = async () => {
     setEditingCase(null);
     await reloadCases();
   };
@@ -256,5 +248,33 @@ export default function App() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function App() {
+  const [cases, setCases] = useState<PatientCase[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+
+  const reloadCases = useCallback(async () => {
+    try {
+      await initializeDatabase();
+      const all = await db.cases.toArray();
+      all.sort((a, b) => b.updatedAt - a.updatedAt);
+      setCases(all);
+    } catch (e) {
+      console.error('Error loading cases:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    reloadCases();
+  }, [reloadCases]);
+
+  return (
+    <FirebaseProvider onCasesChanged={reloadCases}>
+      <AppContent cases={cases} loading={loading} reloadCases={reloadCases} />
+    </FirebaseProvider>
   );
 }

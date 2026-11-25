@@ -1,6 +1,7 @@
 import React from 'react';
 import { PWAInstallButton } from './PWAInstallButton';
 import { useOnlineStatus } from '../hooks/usePWAInstall';
+import { useFirebaseSync } from '../contexts/FirebaseContext';
 import {
   Home,
   ListFilter,
@@ -8,10 +9,11 @@ import {
   BookOpen,
   ShieldCheck,
   HelpCircle,
-  Wifi,
-  WifiOff,
-  CheckCircle2,
   AlertTriangle,
+  Cloud,
+  RefreshCw,
+  LogIn,
+  Users,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -32,6 +34,7 @@ export const Header: React.FC<HeaderProps> = ({
   onChangeZoom,
 }) => {
   const isOnline = useOnlineStatus();
+  const { user, workspace, isSyncing } = useFirebaseSync();
 
   return (
     <header className="sticky top-0 z-40 bg-[#070d19]/95 backdrop-blur-md border-b border-slate-800/80 px-4 lg:px-8 py-2.5">
@@ -51,17 +54,38 @@ export const Header: React.FC<HeaderProps> = ({
                   RHINOLOG
                 </span>
                 <span className="hidden sm:inline-block px-1.5 py-0.2 rounded text-[10px] font-mono bg-teal-950 text-teal-400 border border-teal-800">
-                  OFFLINE-FIRST
+                  OFFLINE + CLOUD
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
-                Ghi ca · kết quả · sổ tay lâm sàng offline
+                Ghi ca · kết quả · đồng bộ đa thiết bị
               </p>
             </div>
           </div>
 
           {/* Mobile Right Quick Status */}
           <div className="flex lg:hidden items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onSelectTab('security')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border transition cursor-pointer ${
+                user
+                  ? 'bg-emerald-950/70 border-emerald-700 text-emerald-300'
+                  : 'bg-teal-500/20 border-teal-500/50 text-teal-300'
+              }`}
+            >
+              {user ? (
+                <>
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                  <span>{isSyncing ? 'Đồng bộ...' : 'Cloud'}</span>
+                </>
+              ) : (
+                <>
+                  <LogIn className="w-3.5 h-3.5" />
+                  <span>Đồng bộ</span>
+                </>
+              )}
+            </button>
             <PWAInstallButton />
           </div>
         </div>
@@ -148,12 +172,48 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>An toàn dữ liệu</span>
+            <span>Đồng bộ & Sao lưu</span>
           </button>
         </nav>
 
         {/* Right utility buttons matching Image 2 */}
-        <div className="hidden lg:flex items-center gap-3">
+        <div className="hidden lg:flex items-center gap-2.5">
+          {/* Cloud Sync / Google Auth Status */}
+          <button
+            type="button"
+            onClick={() => onSelectTab('security')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border transition cursor-pointer ${
+              user
+                ? 'bg-teal-950/60 border-teal-700 text-teal-300 hover:bg-teal-900/60'
+                : 'bg-teal-400 hover:bg-teal-300 border-teal-400 text-slate-950 font-bold'
+            }`}
+            title={user ? `Đang đồng bộ: ${user.email}` : 'Đăng nhập Google để đồng bộ đa thiết bị'}
+          >
+            {user ? (
+              <>
+                {isSyncing ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : workspace ? (
+                  <Users className="w-3.5 h-3.5 text-cyan-300" />
+                ) : (
+                  <Cloud className="w-3.5 h-3.5" />
+                )}
+                <span>
+                  {isSyncing
+                    ? 'Đang đồng bộ...'
+                    : workspace
+                    ? `Kho chung (${workspace.memberEmails.length})`
+                    : 'Cloud Sync'}
+                </span>
+              </>
+            ) : (
+              <>
+                <LogIn className="w-3.5 h-3.5" />
+                <span>Đăng nhập đồng bộ</span>
+              </>
+            )}
+          </button>
+
           {/* Online/Offline Status */}
           <div
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono font-medium ${

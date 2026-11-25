@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { ClinicalImage } from '../../types/medical';
+import { compressImageToDataUrl } from '../../utils/imageCompression';
 import { Plus, Trash2, Eye, X, Image as ImageIcon, Camera, FileText } from 'lucide-react';
 
 interface StepImagesProps {
@@ -20,37 +21,36 @@ export const StepImages: React.FC<StepImagesProps> = ({
   const ctFileInputRef = useRef<HTMLInputElement>(null);
   const endoFileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFiles = (files: FileList | null, type: 'CT_SCAN' | 'ENDOSCOPY') => {
+  const handleFiles = async (files: FileList | null, type: 'CT_SCAN' | 'ENDOSCOPY') => {
     if (!files || files.length === 0) return;
 
-    Array.from(files).forEach((file) => {
-      if (!file.type.startsWith('image/')) return;
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const dataUrl = e.target?.result as string;
-        if (!dataUrl) return;
+    const newImages: ClinicalImage[] = [];
+    for (const file of Array.from(files)) {
+      if (!file.type.startsWith('image/')) continue;
+      const dataUrl = await compressImageToDataUrl(file);
+      if (!dataUrl) continue;
 
-        const newImg: ClinicalImage = {
-          id: 'img-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
-          dataUrl,
-          title: file.name.replace(/\.[^/.]+$/, ''),
-          uploadedAt: Date.now(),
-          type,
-          timing: 'PRE_OP',
-          notes: '',
-        };
+      newImages.push({
+        id: 'img-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+        dataUrl,
+        title: file.name.replace(/\.[^/.]+$/, ''),
+        uploadedAt: Date.now(),
+        type,
+        timing: 'PRE_OP',
+        notes: '',
+      });
+    }
 
-        if (type === 'CT_SCAN') {
-          onUpdateImages([...ctScanImages, newImg], endoscopyImages);
-        } else {
-          onUpdateImages(ctScanImages, [...endoscopyImages, newImg]);
-        }
-      };
-      reader.readAsDataURL(file);
-    });
+    if (newImages.length === 0) return;
+
+    if (type === 'CT_SCAN') {
+      onUpdateImages([...ctScanImages, ...newImages], endoscopyImages);
+    } else {
+      onUpdateImages(ctScanImages, [...endoscopyImages, ...newImages]);
+    }
   };
 
-  const handlePaste = (e: React.ClipboardEvent, type: 'CT_SCAN' | 'ENDOSCOPY') => {
+  const handlePaste = async (e: React.ClipboardEvent, type: 'CT_SCAN' | 'ENDOSCOPY') => {
     const items = e.clipboardData?.items;
     if (!items) return;
 
@@ -58,25 +58,22 @@ export const StepImages: React.FC<StepImagesProps> = ({
       if (items[i].type.indexOf('image') !== -1) {
         const file = items[i].getAsFile();
         if (file) {
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            const dataUrl = event.target?.result as string;
-            const newImg: ClinicalImage = {
-              id: 'img-paste-' + Date.now(),
-              dataUrl,
-              title: `${type === 'CT_SCAN' ? 'CT Scan' : 'Nội soi'} (Ảnh dán ${new Date().toLocaleTimeString('vi-VN')})`,
-              uploadedAt: Date.now(),
-              type,
-              timing: 'PRE_OP',
-              notes: 'Ảnh dán từ clipboard',
-            };
-            if (type === 'CT_SCAN') {
-              onUpdateImages([...ctScanImages, newImg], endoscopyImages);
-            } else {
-              onUpdateImages(ctScanImages, [...endoscopyImages, newImg]);
-            }
+          const dataUrl = await compressImageToDataUrl(file);
+          if (!dataUrl) continue;
+          const newImg: ClinicalImage = {
+            id: 'img-paste-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5),
+            dataUrl,
+            title: `${type === 'CT_SCAN' ? 'CT Scan' : 'Nội soi'} (Ảnh dán ${new Date().toLocaleTimeString('vi-VN')})`,
+            uploadedAt: Date.now(),
+            type,
+            timing: 'PRE_OP',
+            notes: 'Ảnh dán từ clipboard',
           };
-          reader.readAsDataURL(file);
+          if (type === 'CT_SCAN') {
+            onUpdateImages([...ctScanImages, newImg], endoscopyImages);
+          } else {
+            onUpdateImages(ctScanImages, [...endoscopyImages, newImg]);
+          }
         }
       }
     }

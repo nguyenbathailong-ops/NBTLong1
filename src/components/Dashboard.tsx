@@ -1,17 +1,19 @@
 import React from 'react';
 import { PatientCase } from '../types/medical';
+import { useFirebaseSync } from '../contexts/FirebaseContext';
 import {
   Plus,
-  HelpCircle,
   Stethoscope,
-  Activity,
   ShieldCheck,
   Eye,
   FileCheck2,
-  Calendar,
   AlertTriangle,
   Layers,
   ArrowRight,
+  Cloud,
+  RefreshCw,
+  LogIn,
+  Users,
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -31,6 +33,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onOpenGuide,
   onSelectCase,
 }) => {
+  const { user, workspace, isSyncing, signInWithGoogle, triggerManualSync } = useFirebaseSync();
+
   const eyeComplicationsCount = cases.filter(
     (c) => c.diseaseExtent.chandlerGroup !== 'Không lan ổ mắt (Nhóm 0)'
   ).length;
@@ -42,6 +46,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const auditedIssuesCount = cases.reduce((acc, curr) => {
     return acc + (curr.auditStatus?.inconsistencyCount || 0);
   }, 0);
+
+  const syncedCount = cases.filter((c) => c.syncedToCloud).length;
 
   return (
     <div className="space-y-6">
@@ -55,7 +61,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             Việc cần làm
             <button
               onClick={onOpenGuide}
-              className="w-5 h-5 rounded-full border border-slate-700 text-slate-400 hover:text-white text-xs flex items-center justify-center font-sans font-normal transition"
+              className="w-5 h-5 rounded-full border border-slate-700 text-slate-400 hover:text-white text-xs flex items-center justify-center font-sans font-normal transition cursor-pointer"
             >
               ?
             </button>
@@ -69,7 +75,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-300 transition cursor-pointer"
           >
             <ShieldCheck className="w-3.5 h-3.5 text-teal-400" />
-            <span>An toàn dữ liệu</span>
+            <span>Đồng bộ & Sao lưu</span>
           </button>
 
           <button
@@ -92,6 +98,80 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
       </div>
 
+      {/* Multi-device Cloud Sync Banner */}
+      <div className="rounded-2xl bg-gradient-to-r from-[#0c1b33] via-[#0b1528] to-[#0a1322] border border-teal-500/35 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-lg">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-xl bg-teal-500/15 border border-teal-500/40 flex items-center justify-center shrink-0">
+            {workspace ? (
+              <Users className="w-5 h-5 text-cyan-400" />
+            ) : (
+              <Cloud className="w-5 h-5 text-teal-400" />
+            )}
+          </div>
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-sm font-bold text-white">
+                {!user
+                  ? 'Đồng bộ ca bệnh giữa nhiều thiết bị & nhiều tài khoản'
+                  : workspace
+                  ? `Kho chung: ${workspace.name}`
+                  : 'Đang bật Đồng bộ Đám mây (Kho cá nhân)'}
+              </h3>
+              {user && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-700">
+                  {syncedCount}/{cases.length} CA ĐÃ LÊN CLOUD
+                </span>
+              )}
+              {workspace && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-950 text-cyan-300 border border-cyan-700">
+                  {workspace.memberEmails.length} TÀI KHOẢN · MÃ: {workspace.inviteCode}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              {!user
+                ? 'Đăng nhập bằng Google để đồng bộ qua điện thoại, máy tính, Vercel hoặc liên kết nhiều tài khoản Google cùng chung 1 kho dữ liệu.'
+                : workspace
+                ? `Tài khoản ${user.email} đang đồng bộ chung với ${workspace.memberEmails.length} tài khoản (${workspace.memberEmails.join(', ')}).`
+                : `Tài khoản ${user.email} — bấm "Dùng chung nhiều TK" để tạo Kho chung hoặc nhập Mã nhóm đồng bộ với tài khoản khác.`}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {!user ? (
+            <button
+              type="button"
+              onClick={signInWithGoogle}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-teal-400 hover:bg-teal-300 text-slate-950 font-bold text-xs transition cursor-pointer shadow-md"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              <span>Đăng nhập Google</span>
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onOpenSafetyModal}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-300 font-semibold text-xs transition cursor-pointer"
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>{workspace ? 'Quản lý tài khoản' : 'Dùng chung nhiều TK'}</span>
+              </button>
+              <button
+                type="button"
+                disabled={isSyncing}
+                onClick={triggerManualSync}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-teal-500/40 text-teal-300 font-semibold text-xs transition cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>{isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ ngay'}</span>
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
       {/* Quick Start Card matching Image 2 */}
       <div className="bg-[#0b1324] border border-slate-800/90 rounded-2xl p-6 sm:p-7 shadow-xl space-y-4">
         <div className="flex items-center gap-2">
@@ -104,7 +184,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <p className="text-xs text-slate-400 max-w-xl leading-relaxed">
           {cases.length === 0
             ? 'Chưa có ca nào. Bấm + Ghi ca mổ mới để ghi ca đầu tiên.'
-            : `Đã lưu trữ ${cases.length} ca mổ nội trú & nghiên cứu trong bộ nhớ thiết bị. Mọi dữ liệu sẵn sàng hoạt động cả khi mất Internet.`}
+            : `Đã lưu trữ ${cases.length} ca mổ nội trú & nghiên cứu. Mọi dữ liệu sẵn sàng hoạt động cả khi mất Internet và tự đồng bộ khi có mạng.`}
         </p>
 
         <div className="flex flex-wrap items-center gap-3 pt-1">
@@ -146,7 +226,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <div className="text-4xl font-extrabold font-mono text-teal-400">
             {cases.length}
           </div>
-          <p className="text-[11px] text-slate-500">Lưu ngoại tuyến trong IndexedDB</p>
+          <p className="text-[11px] text-slate-500">
+            {user ? `${syncedCount}/${cases.length} ca đã đồng bộ Cloud` : 'Lưu ngoại tuyến trong IndexedDB'}
+          </p>
         </div>
 
         {/* Biến chứng mắt Chandler */}
@@ -192,7 +274,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             Các ca mổ vừa ghi nhận gần đây
           </h4>
           <span className="text-xs text-slate-500">
-            Tự động lưu ngay khi gõ
+            Tự động lưu & đồng bộ
           </span>
         </div>
 
@@ -211,6 +293,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-950/70 text-amber-300 border border-amber-800/60">
                     {c.auditStatus?.completionPercentage || 60}%
                   </span>
+                  {c.syncedToCloud && (
+                    <span
+                      title="Đã đồng bộ Cloud"
+                      className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950/70 text-emerald-300 border border-emerald-800/60 flex items-center gap-1"
+                    >
+                      <Cloud className="w-2.5 h-2.5" /> Cloud
+                    </span>
+                  )}
                   <span className="text-xs text-slate-400">
                     {c.age} tuổi · {c.gender}
                   </span>

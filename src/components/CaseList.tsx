@@ -17,6 +17,7 @@ import {
   FileSpreadsheet,
   FileCode,
   Image as ImageIcon,
+  Cloud,
 } from 'lucide-react';
 
 interface CaseListProps {
@@ -254,6 +255,14 @@ export const CaseList: React.FC<CaseListProps> = ({
                           <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-950/70 text-amber-300 border border-amber-700/60">
                             📄 {pct}%
                           </span>
+                          {c.syncedToCloud && (
+                            <span
+                              title="Đã đồng bộ lên Cloud"
+                              className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950/70 text-emerald-300 border border-emerald-800/60 flex items-center gap-0.5"
+                            >
+                              <Cloud className="w-2.5 h-2.5" />
+                            </span>
+                          )}
                         </div>
                       </td>
 

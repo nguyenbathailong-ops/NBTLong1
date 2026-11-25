@@ -2,13 +2,23 @@ import Dexie, { Table } from 'dexie';
 import { PatientCase } from '../types/medical';
 import { auditSingleCase, calculateLundMackayTotal } from '../utils/validationAudit';
 
+export interface DeletedCaseEntry {
+  id: string;
+  deletedAt: number;
+}
+
 export class RhinologDatabase extends Dexie {
   cases!: Table<PatientCase, string>;
+  deletedCases!: Table<DeletedCaseEntry, string>;
 
   constructor() {
     super('RhinologOfflineDB');
     this.version(1).stores({
       cases: 'id, caseCode, surgeryDate, complexityGrade, address, gender, createdAt, updatedAt',
+    });
+    this.version(2).stores({
+      cases: 'id, caseCode, surgeryDate, complexityGrade, address, gender, createdAt, updatedAt',
+      deletedCases: 'id, deletedAt',
     });
   }
 }
