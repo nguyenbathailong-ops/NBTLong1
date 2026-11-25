@@ -246,7 +246,10 @@ service cloud.firestore {
     match /accounts/{userId} {
       allow get: if isSignedIn()
         && isValidId(userId)
-        && (request.auth.uid == userId || existing().adminUid == request.auth.uid);
+        && (
+          request.auth.uid == userId ||
+          (resource != null && existing().adminUid == request.auth.uid)
+        );
       allow list: if isSignedIn() && resource.data.adminUid == request.auth.uid;
       allow create: if isSignedIn()
         && isValidId(userId)
@@ -291,11 +294,14 @@ service cloud.firestore {
       allow get: if isSignedIn()
         && isValidId(caseId)
         && (
-          (isAdmin() && existing().adminUid == request.auth.uid) ||
-          (isActiveAccount()
-            && request.auth.uid in existing().authorizedUids
-            && existing().isTrashed == false
-            && existing().deleted == false)
+          (resource == null && isActiveAccount()) ||
+          (resource != null && (
+            (isAdmin() && existing().adminUid == request.auth.uid) ||
+            (isActiveAccount()
+              && request.auth.uid in existing().authorizedUids
+              && existing().isTrashed == false
+              && existing().deleted == false)
+          ))
         );
       allow list: if isSignedIn()
         && (
@@ -388,8 +394,11 @@ service cloud.firestore {
           && isValidId(caseId)
           && isValidId(imageId)
           && (
-            (isAdmin() && existing().adminUid == request.auth.uid) ||
-            (isActiveAccount() && request.auth.uid in existing().authorizedUids)
+            (resource == null && isActiveAccount()) ||
+            (resource != null && (
+              (isAdmin() && existing().adminUid == request.auth.uid) ||
+              (isActiveAccount() && request.auth.uid in existing().authorizedUids)
+            ))
           );
         allow list: if isSignedIn()
           && (

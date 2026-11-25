@@ -51,4 +51,9 @@ describe('RHINOLOG Firestore Security Rules (Admin/Guest RBAC + Trash)', () => {
     assert.ok(rulesContent.includes("data.type in ['CT_SCAN', 'ENDOSCOPY', 'CLINICAL_PHOTO']"));
     assert.ok(rulesContent.includes("data.timing in ['PRE_OP', 'POST_OP', 'DISCHARGE']"));
   });
+
+  it('guards resource == null in allow get before accessing existing() fields', () => {
+    assert.ok(rulesContent.includes('(resource == null && isActiveAccount())'));
+    assert.ok(rulesContent.includes('(resource != null && existing().adminUid == request.auth.uid)'));
+  });
 });
