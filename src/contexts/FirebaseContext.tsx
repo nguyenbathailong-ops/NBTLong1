@@ -1,113 +1,202 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/auth';
-import { auth, googleProvider } from '../firebase';
+import { onAuthStateChanged, signOut, User } from 'firebase/auth';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { auth, firestoreDb } from '../firebase';
+import { AppAccount } from '../types/medical';
 import {
-  addMemberEmailToWorkspace,
-  createSharedWorkspace,
-  discoverWorkspaceForUser,
-  joinWorkspaceByInviteCode,
-  removeMemberEmailFromWorkspace,
-  setUserActiveWorkspace,
-  SharedWorkspace,
+  bootstrapAdminAccount,
+  checkAdminInitialized,
+  createGuestAccount as createGuestAccountService,
+  fetchAppAccount,
+  removeGuestAccount,
+  setGuestAccountActive,
+  signInWithSelfAccount,
   subscribeToCloudCases,
-  subscribeToWorkspace,
+  subscribeToManagedAccounts,
   syncAllPendingToCloud,
+  syncAuthorizedUidsToAllCases,
 } from '../services/cloudSync';
+
+export type BootstrapState = 'loading' | 'uninitialized' | 'initialized';
 
 interface FirebaseContextValue {
   user: User | null;
+  account: AppAccount | null;
+  isAdmin: boolean;
   authReady: boolean;
-  workspace: SharedWorkspace | null;
+  bootstrapState: BootstrapState;
+  managedAccounts: AppAccount[];
   isSyncing: boolean;
   lastSyncedAt: number | null;
   authError: string | null;
   clearAuthError: () => void;
-  signInWithGoogle: () => Promise<void>;
+  refreshBootstrapState: () => Promise<void>;
+  initializeAdminAccount: (
+    identifier: string,
+    password: string,
+    displayName: string
+  ) => Promise<AppAccount>;
+  signInWithAccount: (identifier: string, password: string) => Promise<AppAccount>;
+  createGuestAccount: (
+    identifier: string,
+    password: string,
+    displayName: string
+  ) => Promise<AppAccount>;
+  toggleGuestActive: (guestUid: string, active: boolean) => Promise<void>;
+  deleteGuestAccount: (guestUid: string) => Promise<void>;
   signOutUser: () => Promise<void>;
   triggerManualSync: () => Promise<void>;
-  createWorkspace: (name: string) => Promise<void>;
-  joinWorkspace: (inviteCode: string) => Promise<void>;
-  addMemberEmail: (email: string) => Promise<void>;
-  removeMemberEmail: (email: string) => Promise<void>;
-  leaveWorkspace: () => Promise<void>;
 }
 
 const FirebaseContext = createContext<FirebaseContextValue | null>(null);
+
+const ACCOUNT_CACHE_KEY = 'rhinolog_cached_account';
 
 export const FirebaseProvider: React.FC<{
   children: React.ReactNode;
   onCasesChanged: () => void;
 }> = ({ children, onCasesChanged }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [account, setAccount] = useState<AppAccount | null>(null);
   const [authReady, setAuthReady] = useState<boolean>(false);
-  const [workspace, setWorkspace] = useState<SharedWorkspace | null>(null);
-  const [workspaceResolvedForUid, setWorkspaceResolvedForUid] = useState<string | null>(null);
+  const [bootstrapState, setBootstrapState] = useState<BootstrapState>('loading');
+  const [managedAccounts, setManagedAccounts] = useState<AppAccount[]>([]);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
 
   const clearAuthError = useCallback(() => setAuthError(null), []);
 
+  const refreshBootstrapState = useCallback(async () => {
+    try {
+      const status = await checkAdminInitialized();
+      setBootstrapState(status.initialized ? 'initialized' : 'uninitialized');
+    } catch {
+      setBootstrapState('initialized');
+    }
+  }, []);
+
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+    refreshBootstrapState();
+  }, [refreshBootstrapState]);
+
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (!currentUser) {
-        setWorkspace(null);
-        setWorkspaceResolvedForUid(null);
+        setAccount(null);
+        setManagedAccounts([]);
+        localStorage.removeItem(ACCOUNT_CACHE_KEY);
+        setAuthReady(true);
+        return;
       }
-      setAuthReady(true);
+
+      if (!navigator.onLine) {
+        try {
+          const raw = localStorage.getItem(ACCOUNT_CACHE_KEY);
+          if (raw) {
+            const parsed = JSON.parse(raw) as AppAccount;
+            if (parsed.uid === currentUser.uid && parsed.active) {
+              setAccount(parsed);
+              setAuthReady(true);
+              return;
+            }
+          }
+        } catch {
+          // ignore cache error
+        }
+      }
+
+      try {
+        const fetched = await fetchAppAccount(currentUser.uid);
+        if (fetched && fetched.active) {
+          setAccount(fetched);
+          setBootstrapState('initialized');
+          localStorage.setItem(ACCOUNT_CACHE_KEY, JSON.stringify(fetched));
+        } else if (fetched && !fetched.active) {
+          await signOut(auth);
+          setAccount(null);
+          setAuthError('Tài khoản khách này đã bị Admin tạm khóa quyền truy cập.');
+        } else {
+          // Might be mid-bootstrap right before batch write finishes; don't force-signout if bootstrap in progress
+          setAccount(null);
+        }
+      } catch (err: any) {
+        setAuthError(err?.message || 'Không thể tải thông tin tài khoản.');
+      } finally {
+        setAuthReady(true);
+      }
     });
     return () => unsubscribeAuth();
   }, []);
 
-  // Step 1: Discover user profile & active shared workspace when authenticated
+  // Listen to own /accounts/{uid} doc so Admin disabling a Guest revokes access immediately
   useEffect(() => {
-    if (!authReady || !user) return;
-    let active = true;
-
-    const resolveWorkspace = async () => {
-      if (!navigator.onLine) {
-        if (active) setWorkspaceResolvedForUid(user.uid);
-        return;
-      }
-      setIsSyncing(true);
-      try {
-        const discovered = await discoverWorkspaceForUser(user);
-        if (active) {
-          setWorkspace(discovered);
-          setWorkspaceResolvedForUid(user.uid);
+    if (!authReady || !user || !account) return;
+    const unsubSelf = onSnapshot(
+      doc(firestoreDb, 'accounts', user.uid),
+      async (snap) => {
+        if (!snap.exists()) {
+          await signOut(auth);
+          setAccount(null);
+          localStorage.removeItem(ACCOUNT_CACHE_KEY);
+          setAuthError('Tài khoản của bạn đã bị Admin xóa khỏi hệ thống.');
+          return;
         }
-      } catch (err: any) {
-        if (active) {
-          setAuthError(err?.message || 'Không thể tải thông tin kho đồng bộ.');
-          setWorkspaceResolvedForUid(user.uid);
+        const d = snap.data();
+        if (d.active !== true) {
+          await signOut(auth);
+          setAccount(null);
+          localStorage.removeItem(ACCOUNT_CACHE_KEY);
+          setAuthError('Tài khoản khách này đã bị Admin tạm khóa.');
+          return;
         }
-      } finally {
-        if (active) setIsSyncing(false);
+        const updated: AppAccount = {
+          uid: d.uid || user.uid,
+          username: d.username || account.username,
+          email: d.email || account.email,
+          displayName: d.displayName || account.displayName,
+          role: d.role === 'admin' ? 'admin' : 'guest',
+          adminUid: d.adminUid || account.adminUid,
+          active: true,
+        };
+        setAccount(updated);
+        localStorage.setItem(ACCOUNT_CACHE_KEY, JSON.stringify(updated));
+      },
+      () => {
+        // Ignore transient offline listener warnings
       }
-    };
+    );
+    return () => unsubSelf();
+  }, [authReady, user?.uid, Boolean(account)]);
 
-    resolveWorkspace();
-    return () => {
-      active = false;
-    };
-  }, [authReady, user]);
-
-  // Step 2: Subscribe to cases (and workspace updates if in shared workspace)
-  const activeWorkspaceId = workspace?.id || null;
-
+  // Admin: subscribe to managed Guest accounts
   useEffect(() => {
-    if (!authReady || !user || workspaceResolvedForUid !== user.uid) return;
+    if (!authReady || !account || account.role !== 'admin') {
+      setManagedAccounts([]);
+      return;
+    }
+    const unsub = subscribeToManagedAccounts(account.uid, (list) => {
+      setManagedAccounts(list);
+    });
+    return () => unsub();
+  }, [authReady, account?.uid, account?.role]);
+
+  // Two-way Cloud Sync subscription for authenticated active account
+  useEffect(() => {
+    if (!authReady || !account || !account.active) return;
 
     let active = true;
     let unsubscribeCases: (() => void) | null = null;
-    let unsubscribeWorkspace: (() => void) | null = null;
 
     const initSync = async () => {
       if (navigator.onLine) {
         setIsSyncing(true);
         try {
-          await syncAllPendingToCloud(user, workspace);
+          if (account.role === 'admin') {
+            await syncAuthorizedUidsToAllCases(account);
+          }
+          await syncAllPendingToCloud(account);
           if (active) {
             setLastSyncedAt(Date.now());
             onCasesChanged();
@@ -119,8 +208,7 @@ export const FirebaseProvider: React.FC<{
 
       if (active) {
         unsubscribeCases = subscribeToCloudCases(
-          user,
-          workspace,
+          account,
           () => {
             if (active) {
               setLastSyncedAt(Date.now());
@@ -134,14 +222,6 @@ export const FirebaseProvider: React.FC<{
             }
           }
         );
-
-        if (workspace) {
-          unsubscribeWorkspace = subscribeToWorkspace(workspace.id, user.uid, (updatedWs) => {
-            if (active) {
-              setWorkspace(updatedWs);
-            }
-          });
-        }
       }
     };
 
@@ -151,12 +231,10 @@ export const FirebaseProvider: React.FC<{
       if (!active) return;
       setIsSyncing(true);
       try {
-        const refreshedWs = await discoverWorkspaceForUser(user);
-        if (active && refreshedWs?.id !== workspace?.id) {
-          setWorkspace(refreshedWs);
-          return;
+        if (account.role === 'admin') {
+          await syncAuthorizedUidsToAllCases(account);
         }
-        await syncAllPendingToCloud(user, refreshedWs || workspace);
+        await syncAllPendingToCloud(account);
         if (active) {
           setLastSyncedAt(Date.now());
           onCasesChanged();
@@ -172,159 +250,154 @@ export const FirebaseProvider: React.FC<{
       active = false;
       window.removeEventListener('online', handleOnline);
       if (unsubscribeCases) unsubscribeCases();
-      if (unsubscribeWorkspace) unsubscribeWorkspace();
     };
-  }, [authReady, user, workspaceResolvedForUid, activeWorkspaceId, onCasesChanged]);
+  }, [authReady, account?.uid, account?.role, account?.active, onCasesChanged]);
 
-  const signInWithGoogle = useCallback(async () => {
-    setAuthError(null);
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (err: any) {
-      const code = err?.code || '';
-      if (code === 'auth/unauthorized-domain') {
-        setAuthError(
-          `Tên miền "${window.location.hostname}" chưa được thêm vào Authorized Domains trong Firebase Authentication Console. Hãy vào Firebase Console -> Authentication -> Settings -> Authorized domains và thêm "${window.location.hostname}" để đăng nhập trên Vercel.`
-        );
-      } else if (code === 'auth/popup-closed-by-user') {
-        setAuthError('Bạn đã đóng cửa sổ đăng nhập Google trước khi hoàn tất.');
-      } else if (code === 'auth/popup-blocked') {
-        setAuthError(
-          'Trình duyệt đã chặn cửa sổ đăng nhập bật lên (Popup). Vui lòng cho phép popup cho trang web này.'
-        );
-      } else {
-        setAuthError(err?.message || 'Không thể đăng nhập Google. Vui lòng thử lại.');
+  const initializeAdminAccount = useCallback(
+    async (identifier: string, password: string, displayName: string) => {
+      setAuthError(null);
+      setIsSyncing(true);
+      try {
+        const adminAcc = await bootstrapAdminAccount(identifier, password, displayName);
+        setAccount(adminAcc);
+        setBootstrapState('initialized');
+        localStorage.setItem(ACCOUNT_CACHE_KEY, JSON.stringify(adminAcc));
+        await syncAllPendingToCloud(adminAcc);
+        setLastSyncedAt(Date.now());
+        onCasesChanged();
+        return adminAcc;
+      } catch (err: any) {
+        setAuthError(err?.message || 'Không thể khởi tạo tài khoản Admin.');
+        throw err;
+      } finally {
+        setIsSyncing(false);
       }
-    }
-  }, []);
+    },
+    [onCasesChanged]
+  );
+
+  const signInWithAccount = useCallback(
+    async (identifier: string, password: string) => {
+      setAuthError(null);
+      setIsSyncing(true);
+      try {
+        const acc = await signInWithSelfAccount(identifier, password);
+        setAccount(acc);
+        setBootstrapState('initialized');
+        localStorage.setItem(ACCOUNT_CACHE_KEY, JSON.stringify(acc));
+        return acc;
+      } catch (err: any) {
+        setAuthError(err?.message || 'Không thể đăng nhập.');
+        throw err;
+      } finally {
+        setIsSyncing(false);
+      }
+    },
+    []
+  );
+
+  const createGuestAccount = useCallback(
+    async (identifier: string, password: string, displayName: string) => {
+      if (!account || account.role !== 'admin') {
+        throw new Error('Chỉ Admin mới có quyền tạo tài khoản khách.');
+      }
+      setAuthError(null);
+      setIsSyncing(true);
+      try {
+        const guest = await createGuestAccountService(account, identifier, password, displayName);
+        return guest;
+      } catch (err: any) {
+        setAuthError(err?.message || 'Không thể tạo tài khoản khách.');
+        throw err;
+      } finally {
+        setIsSyncing(false);
+      }
+    },
+    [account]
+  );
+
+  const toggleGuestActive = useCallback(
+    async (guestUid: string, active: boolean) => {
+      if (!account || account.role !== 'admin') return;
+      setAuthError(null);
+      setIsSyncing(true);
+      try {
+        await setGuestAccountActive(account, guestUid, active);
+      } catch (err: any) {
+        setAuthError(err?.message || 'Không thể cập nhật trạng thái tài khoản khách.');
+        throw err;
+      } finally {
+        setIsSyncing(false);
+      }
+    },
+    [account]
+  );
+
+  const deleteGuestAccount = useCallback(
+    async (guestUid: string) => {
+      if (!account || account.role !== 'admin') return;
+      setAuthError(null);
+      setIsSyncing(true);
+      try {
+        await removeGuestAccount(account, guestUid);
+      } catch (err: any) {
+        setAuthError(err?.message || 'Không thể xóa tài khoản khách.');
+        throw err;
+      } finally {
+        setIsSyncing(false);
+      }
+    },
+    [account]
+  );
 
   const signOutUser = useCallback(async () => {
     setAuthError(null);
-    setWorkspace(null);
-    setWorkspaceResolvedForUid(null);
+    setAccount(null);
+    setManagedAccounts([]);
+    localStorage.removeItem(ACCOUNT_CACHE_KEY);
     await signOut(auth);
   }, []);
 
   const triggerManualSync = useCallback(async () => {
-    if (!user) return;
+    if (!account) return;
     if (!navigator.onLine) {
       setAuthError('Thiết bị đang ngoại tuyến (Offline). Kết nối Internet để đồng bộ ngay.');
       return;
     }
     setIsSyncing(true);
     try {
-      const refreshedWs = await discoverWorkspaceForUser(user);
-      setWorkspace(refreshedWs);
-      await syncAllPendingToCloud(user, refreshedWs);
+      if (account.role === 'admin') {
+        await syncAuthorizedUidsToAllCases(account);
+      }
+      await syncAllPendingToCloud(account);
       setLastSyncedAt(Date.now());
       onCasesChanged();
     } finally {
       setIsSyncing(false);
     }
-  }, [user, onCasesChanged]);
-
-  const createWorkspace = useCallback(
-    async (name: string) => {
-      if (!user) return;
-      setAuthError(null);
-      setIsSyncing(true);
-      try {
-        const ws = await createSharedWorkspace(user, name);
-        setWorkspace(ws);
-        await syncAllPendingToCloud(user, ws);
-        setLastSyncedAt(Date.now());
-        onCasesChanged();
-      } catch (err: any) {
-        setAuthError(err?.message || 'Không thể tạo kho đồng bộ chung.');
-        throw err;
-      } finally {
-        setIsSyncing(false);
-      }
-    },
-    [user, onCasesChanged]
-  );
-
-  const joinWorkspace = useCallback(
-    async (inviteCode: string) => {
-      if (!user) return;
-      setAuthError(null);
-      setIsSyncing(true);
-      try {
-        const ws = await joinWorkspaceByInviteCode(user, inviteCode);
-        setWorkspace(ws);
-        setLastSyncedAt(Date.now());
-        onCasesChanged();
-      } catch (err: any) {
-        setAuthError(err?.message || 'Không thể tham gia kho đồng bộ bằng mã này.');
-        throw err;
-      } finally {
-        setIsSyncing(false);
-      }
-    },
-    [user, onCasesChanged]
-  );
-
-  const addMemberEmail = useCallback(
-    async (email: string) => {
-      if (!workspace) return;
-      setAuthError(null);
-      setIsSyncing(true);
-      try {
-        const updated = await addMemberEmailToWorkspace(workspace, email);
-        setWorkspace(updated);
-      } catch (err: any) {
-        setAuthError(err?.message || 'Không thể thêm email tài khoản.');
-        throw err;
-      } finally {
-        setIsSyncing(false);
-      }
-    },
-    [workspace]
-  );
-
-  const removeMemberEmail = useCallback(
-    async (email: string) => {
-      if (!workspace) return;
-      setAuthError(null);
-      setIsSyncing(true);
-      try {
-        const updated = await removeMemberEmailFromWorkspace(workspace, email);
-        setWorkspace(updated);
-      } catch (err: any) {
-        setAuthError(err?.message || 'Không thể xóa thành viên.');
-        throw err;
-      } finally {
-        setIsSyncing(false);
-      }
-    },
-    [workspace]
-  );
-
-  const leaveWorkspace = useCallback(async () => {
-    if (!user) return;
-    setAuthError(null);
-    await setUserActiveWorkspace(user.uid, null);
-    setWorkspace(null);
-  }, [user]);
+  }, [account, onCasesChanged]);
 
   return (
     <FirebaseContext.Provider
       value={{
         user,
+        account,
+        isAdmin: account?.role === 'admin',
         authReady,
-        workspace,
+        bootstrapState,
+        managedAccounts,
         isSyncing,
         lastSyncedAt,
         authError,
         clearAuthError,
-        signInWithGoogle,
+        refreshBootstrapState,
+        initializeAdminAccount,
+        signInWithAccount,
+        createGuestAccount,
+        toggleGuestActive,
+        deleteGuestAccount,
         signOutUser,
         triggerManualSync,
-        createWorkspace,
-        joinWorkspace,
-        addMemberEmail,
-        removeMemberEmail,
-        leaveWorkspace,
       }}
     >
       {children}

@@ -10,17 +10,28 @@ import {
   ShieldCheck,
   HelpCircle,
   AlertTriangle,
-  Cloud,
   RefreshCw,
   LogIn,
-  Users,
+  Shield,
+  User as UserIcon,
+  Trash2,
 } from 'lucide-react';
 
+export type AppTab =
+  | 'dashboard'
+  | 'cases'
+  | 'reconciliation'
+  | 'analytics'
+  | 'knowledge'
+  | 'trash'
+  | 'security';
+
 interface HeaderProps {
-  currentTab: 'dashboard' | 'cases' | 'reconciliation' | 'analytics' | 'knowledge' | 'security';
-  onSelectTab: (tab: 'dashboard' | 'cases' | 'reconciliation' | 'analytics' | 'knowledge' | 'security') => void;
+  currentTab: AppTab;
+  onSelectTab: (tab: AppTab) => void;
   onOpenGuide: () => void;
   issuesCount: number;
+  trashCount: number;
   zoomLevel: number;
   onChangeZoom: (delta: number) => void;
 }
@@ -30,11 +41,12 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectTab,
   onOpenGuide,
   issuesCount,
+  trashCount,
   zoomLevel,
   onChangeZoom,
 }) => {
   const isOnline = useOnlineStatus();
-  const { user, workspace, isSyncing } = useFirebaseSync();
+  const { account, isAdmin, isSyncing } = useFirebaseSync();
 
   return (
     <header className="sticky top-0 z-40 bg-[#070d19]/95 backdrop-blur-md border-b border-slate-800/80 px-4 lg:px-8 py-2.5">
@@ -69,20 +81,22 @@ export const Header: React.FC<HeaderProps> = ({
               type="button"
               onClick={() => onSelectTab('security')}
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border transition cursor-pointer ${
-                user
-                  ? 'bg-emerald-950/70 border-emerald-700 text-emerald-300'
+                account
+                  ? isAdmin
+                    ? 'bg-amber-950/70 border-amber-700 text-amber-300'
+                    : 'bg-cyan-950/70 border-cyan-700 text-cyan-300'
                   : 'bg-teal-500/20 border-teal-500/50 text-teal-300'
               }`}
             >
-              {user ? (
+              {account ? (
                 <>
                   <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                  <span>{isSyncing ? 'Đồng bộ...' : 'Cloud'}</span>
+                  <span>{isAdmin ? 'Admin' : 'Khách'}</span>
                 </>
               ) : (
                 <>
                   <LogIn className="w-3.5 h-3.5" />
-                  <span>Đồng bộ</span>
+                  <span>Đăng nhập</span>
                 </>
               )}
             </button>
@@ -90,7 +104,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Navigation Tabs matching Image 2 */}
+        {/* Navigation Tabs */}
         <nav className="flex items-center gap-1 overflow-x-auto py-1 scrollbar-none">
           <button
             type="button"
@@ -162,6 +176,26 @@ export const Header: React.FC<HeaderProps> = ({
             <span>Kiến thức</span>
           </button>
 
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => onSelectTab('trash')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer shrink-0 ${
+                currentTab === 'trash'
+                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/50'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+              }`}
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <span>Thùng rác</span>
+              {trashCount > 0 && (
+                <span className="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-rose-500 text-white">
+                  {trashCount}
+                </span>
+              )}
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => onSelectTab('security')}
@@ -172,44 +206,48 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Đồng bộ & Sao lưu</span>
+            <span>{isAdmin ? 'Tài khoản & Sao lưu' : 'Đồng bộ & Sao lưu'}</span>
           </button>
         </nav>
 
-        {/* Right utility buttons matching Image 2 */}
+        {/* Right utility buttons */}
         <div className="hidden lg:flex items-center gap-2.5">
-          {/* Cloud Sync / Google Auth Status */}
+          {/* Account Auth / Role Status */}
           <button
             type="button"
             onClick={() => onSelectTab('security')}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border transition cursor-pointer ${
-              user
-                ? 'bg-teal-950/60 border-teal-700 text-teal-300 hover:bg-teal-900/60'
+              account
+                ? isAdmin
+                  ? 'bg-amber-950/60 border-amber-700 text-amber-300 hover:bg-amber-900/60'
+                  : 'bg-cyan-950/60 border-cyan-700 text-cyan-300 hover:bg-cyan-900/60'
                 : 'bg-teal-400 hover:bg-teal-300 border-teal-400 text-slate-950 font-bold'
             }`}
-            title={user ? `Đang đồng bộ: ${user.email}` : 'Đăng nhập Google để đồng bộ đa thiết bị'}
+            title={
+              account
+                ? `${account.displayName} (${account.username})`
+                : 'Đăng nhập hoặc khởi tạo tài khoản Admin'
+            }
           >
-            {user ? (
+            {account ? (
               <>
                 {isSyncing ? (
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : workspace ? (
-                  <Users className="w-3.5 h-3.5 text-cyan-300" />
+                ) : isAdmin ? (
+                  <Shield className="w-3.5 h-3.5 text-amber-300" />
                 ) : (
-                  <Cloud className="w-3.5 h-3.5" />
+                  <UserIcon className="w-3.5 h-3.5 text-cyan-300" />
                 )}
                 <span>
                   {isSyncing
                     ? 'Đang đồng bộ...'
-                    : workspace
-                    ? `Kho chung (${workspace.memberEmails.length})`
-                    : 'Cloud Sync'}
+                    : `${isAdmin ? 'ADMIN' : 'KHÁCH'} · ${account.displayName}`}
                 </span>
               </>
             ) : (
               <>
                 <LogIn className="w-3.5 h-3.5" />
-                <span>Đăng nhập đồng bộ</span>
+                <span>Đăng nhập</span>
               </>
             )}
           </button>

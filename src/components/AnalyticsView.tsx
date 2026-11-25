@@ -88,14 +88,21 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ cases }) => {
 
         <div className="bg-[#0a1120] border border-slate-800 rounded-xl p-4 space-y-1">
           <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-400">
-            Tỷ lệ mổ thành công
+            Hồi phục hoàn toàn
           </span>
           <div className="text-2xl font-bold font-mono text-indigo-400">
             {totalCases > 0
-              ? `${Math.round(((outcomeCounts['Cải thiện'] || 0) / totalCases) * 100)}%`
+              ? `${Math.round(
+                  (((outcomeCounts['Hồi phục hoàn toàn'] || 0) +
+                    (outcomeCounts['Cải thiện'] || 0)) /
+                    totalCases) *
+                    100
+                )}%`
               : '0%'}
           </div>
-          <p className="text-[10px] text-slate-500">Hồi phục thị lực & hết nhiễm trùng</p>
+          <p className="text-[10px] text-slate-500">
+            Còn di chứng: {outcomeCounts['Còn di chứng sau điều trị'] || 0} ca
+          </p>
         </div>
 
         <div className="bg-[#0a1120] border border-slate-800 rounded-xl p-4 space-y-1">
@@ -103,14 +110,19 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ cases }) => {
             Tử vong
           </span>
           <div className="text-2xl font-bold font-mono text-rose-400">
-            {cases.filter((c) => c.treatmentFeatures.mortality === 'Có').length} ca
+            {cases.filter(
+              (c) =>
+                c.treatmentFeatures.mortality === 'Có' ||
+                c.treatmentFeatures.treatmentOutcome === 'Tử vong'
+            ).length}{' '}
+            ca
           </div>
           <p className="text-[10px] text-slate-500">Do sốc nhiễm trùng/nội sọ</p>
         </div>
       </div>
 
       {/* Breakdown Grids */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Phân độ Chandler */}
         <div className="bg-[#0a1120] border border-slate-800 rounded-xl p-5 space-y-4">
           <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
@@ -160,6 +172,58 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ cases }) => {
                   <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
                     <div
                       className="bg-emerald-500 h-full rounded-full transition-all duration-300"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Kết quả điều trị lúc xuất viện */}
+        <div className="bg-[#0a1120] border border-slate-800 rounded-xl p-5 space-y-4">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+            <span className="w-1.5 h-3.5 bg-amber-400 rounded-xs" />
+            KẾT QUẢ ĐIỀU TRỊ LÚC XUẤT VIỆN
+          </h3>
+          <div className="space-y-2.5">
+            {(
+              [
+                {
+                  label: 'Hồi phục hoàn toàn',
+                  count:
+                    (outcomeCounts['Hồi phục hoàn toàn'] || 0) +
+                    (outcomeCounts['Cải thiện'] || 0),
+                  barCls: 'bg-emerald-500',
+                  txtCls: 'text-emerald-400',
+                },
+                {
+                  label: 'Còn di chứng sau điều trị',
+                  count: outcomeCounts['Còn di chứng sau điều trị'] || 0,
+                  barCls: 'bg-amber-500',
+                  txtCls: 'text-amber-400',
+                },
+                {
+                  label: 'Tử vong',
+                  count: outcomeCounts['Tử vong'] || 0,
+                  barCls: 'bg-rose-500',
+                  txtCls: 'text-rose-400',
+                },
+              ] as const
+            ).map((row) => {
+              const pct = totalCases > 0 ? Math.round((row.count / totalCases) * 100) : 0;
+              return (
+                <div key={row.label} className="space-y-1">
+                  <div className="flex justify-between text-xs text-slate-300">
+                    <span>{row.label}</span>
+                    <span className={`font-mono font-bold ${row.txtCls}`}>
+                      {row.count} ca ({pct}%)
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                    <div
+                      className={`${row.barCls} h-full rounded-full transition-all duration-300`}
                       style={{ width: `${pct}%` }}
                     />
                   </div>

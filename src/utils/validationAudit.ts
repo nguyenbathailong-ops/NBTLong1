@@ -78,15 +78,55 @@ export function auditSingleCase(patient: PatientCase): {
     }
   }
 
-  // B. Tử vong vs Kết quả điều trị
-  if (patient.treatmentFeatures.mortality === 'Có' && patient.treatmentFeatures.treatmentOutcome === 'Cải thiện') {
+  // B. Tử vong, Di chứng vs Kết quả điều trị lúc xuất viện
+  const outcomeStr = patient.treatmentFeatures.treatmentOutcome as string;
+  if (patient.treatmentFeatures.mortality === 'Có' && outcomeStr !== 'Tử vong') {
     issues.push({
       caseId: patient.id,
       caseCode: patient.caseCode,
       severity: 'error',
       category: 'logic_conflict',
-      message: 'Mâu thuẫn nghiêm trọng: Bệnh nhân "Tử vong = Có" nhưng kết quả điều trị lại để "Cải thiện".',
+      message: `Mâu thuẫn nghiêm trọng: Bệnh nhân "Tử vong = Có" nhưng kết quả điều trị lúc xuất viện lại để "${outcomeStr || 'Chưa chọn'}".`,
       fieldKey: 'treatmentOutcome',
+      stepNumber: 5,
+    });
+  }
+  if (outcomeStr === 'Tử vong' && patient.treatmentFeatures.mortality !== 'Có') {
+    issues.push({
+      caseId: patient.id,
+      caseCode: patient.caseCode,
+      severity: 'error',
+      category: 'logic_conflict',
+      message: 'Mâu thuẫn nghiêm trọng: Kết quả điều trị chọn "Tử vong" nhưng mục "Tử vong" đang để "Không".',
+      fieldKey: 'mortality',
+      stepNumber: 5,
+    });
+  }
+
+  const seq = patient.treatmentFeatures.sequelae;
+  const hasAnySequelae = seq
+    ? Object.entries(seq).some(([k, v]) => k !== 'otherSequelaeDetails' && v === 'Có')
+    : false;
+
+  if (outcomeStr === 'Hồi phục hoàn toàn' && hasAnySequelae) {
+    issues.push({
+      caseId: patient.id,
+      caseCode: patient.caseCode,
+      severity: 'warning',
+      category: 'logic_conflict',
+      message: 'Kết quả điều trị chọn "Hồi phục hoàn toàn" nhưng phần di chứng sau điều trị vẫn ghi nhận "Có".',
+      fieldKey: 'treatmentOutcome',
+      stepNumber: 5,
+    });
+  }
+  if (outcomeStr === 'Còn di chứng sau điều trị' && !hasAnySequelae) {
+    issues.push({
+      caseId: patient.id,
+      caseCode: patient.caseCode,
+      severity: 'warning',
+      category: 'logic_conflict',
+      message: 'Kết quả điều trị chọn "Còn di chứng sau điều trị" nhưng chưa đánh dấu di chứng cụ thể nào.',
+      fieldKey: 'sequelae',
       stepNumber: 5,
     });
   }
@@ -123,7 +163,8 @@ export function auditSingleCase(patient: PatientCase): {
     patient.eyeSymptoms.ptosis === 'Có' ||
     patient.eyeSymptoms.proptosis === 'Có' ||
     patient.eyeSymptoms.visualLossOrDecrease === 'Có' ||
-    patient.eyeSymptoms.ocularMobilityDisorder === 'Có';
+    patient.eyeSymptoms.ocularMobilityDisorder === 'Có' ||
+    patient.eyeSymptoms.diplopia === 'Có';
 
   if (isChandlerComplication && !hasEyeSymptoms) {
     issues.push({
@@ -195,7 +236,15 @@ export function auditSingleCase(patient: PatientCase): {
     { val: patient.treatmentFeatures.treatmentOutcome, weight: 5, field: 'treatmentOutcome', name: 'Kết quả điều trị' },
     { val: patient.treatmentFeatures.mortality, weight: 5, field: 'mortality', name: 'Tử vong' },
     { val: patient.labResults.whiteBloodCells !== null, weight: 5, field: 'whiteBloodCells', name: 'Bạch cầu' },
-    { val: (patient.images.ctScanImages?.length || 0) + (patient.images.endoscopyImages?.length || 0) > 0, weight: 5, field: 'images', name: 'Hình ảnh CT hoặc Nội soi' },
+    {
+      val:
+        (patient.images.ctScanImages?.length || 0) +
+        (patient.images.endoscopyImages?.length || 0) +
+        (patient.images.clinicalImages?.length || 0) > 0,
+      weight: 5,
+      field: 'images',
+      name: 'Hình ảnh lâm sàng / CT / Nội soi',
+    },
   ];
 
   let completedWeight = 0;

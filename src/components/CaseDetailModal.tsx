@@ -96,67 +96,164 @@ export const CaseDetailModal: React.FC<CaseDetailModalProps> = ({
             <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800 space-y-2">
               <h4 className="font-bold text-cyan-400 uppercase text-[11px]">Điều trị & Kết cục hậu phẫu</h4>
               <p>• <strong>Phẫu thuật:</strong> {caseItem.treatmentFeatures.surgeryPerformed === 'Có' ? `Có (${caseItem.treatmentFeatures.surgeryCount} lần)` : 'Điều trị nội khoa'}</p>
-              <p>• <strong>Thủ thuật thực hiện:</strong> {caseItem.treatmentFeatures.surgicalProcedures?.join(', ') || 'Chưa ghi'}</p>
+              <p>• <strong>Phương pháp phẫu thuật:</strong> {caseItem.treatmentFeatures.surgicalProcedures?.join(', ') || 'Chưa ghi'}</p>
               <p>• <strong>Kháng sinh:</strong> {caseItem.treatmentFeatures.antibiotics || 'Chưa ghi'}</p>
+              <p>• <strong>Thuốc kháng nấm:</strong> {caseItem.treatmentFeatures.antifungals?.length ? caseItem.treatmentFeatures.antifungals.join(', ') : 'Không'}</p>
               <p>• <strong>Số ngày điều trị:</strong> {caseItem.treatmentFeatures.treatmentDays ?? '-'} ngày</p>
-              <p>• <strong>Kết quả điều trị:</strong> <span className="text-emerald-400 font-bold">{caseItem.treatmentFeatures.treatmentOutcome}</span></p>
+              <p>
+                • <strong>Kết quả điều trị lúc xuất viện:</strong>{' '}
+                <span
+                  className={`font-bold ${
+                    caseItem.treatmentFeatures.treatmentOutcome === 'Tử vong'
+                      ? 'text-rose-400'
+                      : caseItem.treatmentFeatures.treatmentOutcome === 'Còn di chứng sau điều trị'
+                      ? 'text-amber-300'
+                      : 'text-emerald-400'
+                  }`}
+                >
+                  {caseItem.treatmentFeatures.treatmentOutcome}
+                </span>
+              </p>
+              <p>• <strong>Di chứng sau điều trị:</strong> {(() => {
+                const sq = caseItem.treatmentFeatures.sequelae;
+                if (!sq) return 'Không ghi nhận';
+                const list = [
+                  sq.ptosis === 'Có' ? 'Sụp mi' : null,
+                  sq.proptosis === 'Có' ? 'Lồi mắt' : null,
+                  sq.visualLossOrDecrease === 'Có' ? 'Mất/giảm thị lực' : null,
+                  sq.ocularMobilityDisorder === 'Có' ? 'Rối loạn vận nhãn' : null,
+                  sq.diplopia === 'Có' ? 'Nhìn đôi' : null,
+                  sq.focalNeurologicalDeficit === 'Có' ? 'Dấu thần kinh định vị' : null,
+                  sq.seizures === 'Có' ? 'Co giật' : null,
+                  sq.meningitis === 'Có' ? 'Viêm màng não' : null,
+                  sq.brainAbscess === 'Có' ? 'Áp xe não' : null,
+                  sq.csfLeak === 'Có' ? 'Rò dịch não tủy' : null,
+                  sq.cerebralInfarction === 'Có' ? 'Nhồi máu não' : null,
+                  sq.otherSequelae === 'Có' ? (sq.otherSequelaeDetails || 'Di chứng khác') : null,
+                ].filter(Boolean);
+                return list.length > 0 ? <span className="text-amber-300 font-semibold">{list.join(', ')}</span> : 'Không có di chứng';
+              })()}</p>
               <p>• <strong>Tử vong:</strong> {caseItem.treatmentFeatures.mortality}</p>
             </div>
           </div>
 
-          {/* Row 3: HÌNH ẢNH CT VÀ NỘI SOI TRƯỚC MỔ */}
-          <div className="space-y-3 p-4 rounded-xl bg-slate-900/40 border border-slate-800">
-            <div className="flex items-center justify-between">
-              <h4 className="font-bold text-emerald-400 uppercase text-[11px] flex items-center gap-1.5">
-                <ImageIcon className="w-4 h-4" /> Hình ảnh CT Scan & Nội soi trước mổ
-              </h4>
-              <span className="text-slate-400 text-[11px]">
-                {(caseItem.images?.ctScanImages?.length || 0) + (caseItem.images?.endoscopyImages?.length || 0)} ảnh
-              </span>
-            </div>
+          {/* Row 3: HÌNH ẢNH TRƯỚC MỔ & KHI XUẤT VIỆN */}
+          {(() => {
+            const allImages: ClinicalImage[] = [
+              ...(caseItem.images?.clinicalImages || []),
+              ...(caseItem.images?.ctScanImages || []),
+              ...(caseItem.images?.endoscopyImages || []),
+            ];
+            const preOpImages = allImages.filter(
+              (img) => img.timing !== 'DISCHARGE' && img.timing !== 'POST_OP'
+            );
+            const dischargeImages = allImages.filter(
+              (img) => img.timing === 'DISCHARGE' || img.timing === 'POST_OP'
+            );
+            const typeBadge = (type: ClinicalImage['type']) =>
+              type === 'CLINICAL_PHOTO'
+                ? { text: 'LÂM SÀNG', cls: 'text-amber-300' }
+                : type === 'ENDOSCOPY'
+                ? { text: 'NỘI SOI', cls: 'text-emerald-300' }
+                : { text: 'CT', cls: 'text-cyan-300' };
 
-            {(caseItem.images?.ctScanImages?.length || 0) + (caseItem.images?.endoscopyImages?.length || 0) === 0 ? (
-              <p className="text-slate-500 italic py-2">Ca này chưa đính kèm hình ảnh.</p>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {caseItem.images?.ctScanImages?.map((img) => (
-                  <div
-                    key={img.id}
-                    onClick={() => setActiveImage(img)}
-                    className="group rounded-lg border border-slate-800 overflow-hidden bg-black/60 cursor-pointer hover:border-teal-500 transition"
-                  >
-                    <div className="aspect-video relative">
-                      <img src={img.dataUrl} alt={img.title} className="w-full h-full object-cover" />
-                      <span className="absolute bottom-1 left-1 bg-black/80 px-1 py-0.2 rounded text-[9px] font-mono text-cyan-300">
-                        CT
+            return (
+              <div className="space-y-4 p-4 rounded-xl bg-slate-900/40 border border-slate-800">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-bold text-emerald-400 uppercase text-[11px] flex items-center gap-1.5">
+                    <ImageIcon className="w-4 h-4" /> Hình ảnh Trước mổ &amp; Khi xuất viện
+                  </h4>
+                  <span className="text-slate-400 text-[11px] font-mono">
+                    {preOpImages.length} trước mổ · {dischargeImages.length} xuất viện
+                  </span>
+                </div>
+
+                {allImages.length === 0 ? (
+                  <p className="text-slate-500 italic py-2">Ca này chưa đính kèm hình ảnh.</p>
+                ) : (
+                  <div className="space-y-4">
+                    {/* Trước mổ */}
+                    <div className="space-y-2">
+                      <span className="inline-block text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-cyan-950/70 text-cyan-300 border border-cyan-800/60">
+                        Trước mổ ({preOpImages.length})
                       </span>
+                      {preOpImages.length === 0 ? (
+                        <p className="text-slate-500 italic text-[11px]">Chưa có ảnh trước mổ.</p>
+                      ) : (
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          {preOpImages.map((img) => {
+                            const badge = typeBadge(img.type);
+                            return (
+                              <div
+                                key={img.id}
+                                onClick={() => setActiveImage(img)}
+                                className="group rounded-lg border border-slate-800 overflow-hidden bg-black/60 cursor-pointer hover:border-cyan-500 transition"
+                              >
+                                <div className="aspect-video relative">
+                                  <img
+                                    src={img.dataUrl}
+                                    alt={img.title}
+                                    className="w-full h-full object-cover"
+                                  />
+                                  <span
+                                    className={`absolute bottom-1 left-1 bg-black/80 px-1.5 py-0.5 rounded text-[9px] font-mono ${badge.cls}`}
+                                  >
+                                    {badge.text}
+                                  </span>
+                                </div>
+                                <div className="p-1.5 text-[10px] text-slate-300 truncate">
+                                  {img.notes || img.title}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
-                    <div className="p-1.5 text-[10px] text-slate-300 truncate">
-                      {img.title}
+
+                    {/* Khi xuất viện */}
+                    <div className="space-y-2 pt-2 border-t border-slate-800/70">
+                      <span className="inline-block text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800/60">
+                        Khi xuất viện ({dischargeImages.length})
+                      </span>
+                      {dischargeImages.length === 0 ? (
+                        <p className="text-slate-500 italic text-[11px]">Chưa có ảnh khi xuất viện.</p>
+                      ) : (
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          {dischargeImages.map((img) => {
+                            const badge = typeBadge(img.type);
+                            return (
+                              <div
+                                key={img.id}
+                                onClick={() => setActiveImage(img)}
+                                className="group rounded-lg border border-slate-800 overflow-hidden bg-black/60 cursor-pointer hover:border-emerald-500 transition"
+                              >
+                                <div className="aspect-video relative">
+                                  <img
+                                    src={img.dataUrl}
+                                    alt={img.title}
+                                    className="w-full h-full object-cover"
+                                  />
+                                  <span
+                                    className={`absolute bottom-1 left-1 bg-black/80 px-1.5 py-0.5 rounded text-[9px] font-mono ${badge.cls}`}
+                                  >
+                                    {badge.text}
+                                  </span>
+                                </div>
+                                <div className="p-1.5 text-[10px] text-slate-300 truncate">
+                                  {img.notes || img.title}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   </div>
-                ))}
-
-                {caseItem.images?.endoscopyImages?.map((img) => (
-                  <div
-                    key={img.id}
-                    onClick={() => setActiveImage(img)}
-                    className="group rounded-lg border border-slate-800 overflow-hidden bg-black/60 cursor-pointer hover:border-teal-500 transition"
-                  >
-                    <div className="aspect-video relative">
-                      <img src={img.dataUrl} alt={img.title} className="w-full h-full object-cover" />
-                      <span className="absolute bottom-1 left-1 bg-black/80 px-1 py-0.2 rounded text-[9px] font-mono text-emerald-300">
-                        NỘI SOI
-                      </span>
-                    </div>
-                    <div className="p-1.5 text-[10px] text-slate-300 truncate">
-                      {img.title}
-                    </div>
-                  </div>
-                ))}
+                )}
               </div>
-            )}
-          </div>
+            );
+          })()}
         </div>
 
         {/* Modal viewer for single image */}
@@ -164,7 +261,20 @@ export const CaseDetailModal: React.FC<CaseDetailModalProps> = ({
           <div className="fixed inset-0 z-60 bg-black/90 flex items-center justify-center p-4">
             <div className="relative max-w-3xl w-full flex flex-col bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
               <div className="flex justify-between items-center px-4 py-2 bg-slate-950 border-b border-slate-800">
-                <span className="text-xs font-bold text-white">{activeImage.title}</span>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-[10px] px-2 py-0.5 rounded font-mono font-bold ${
+                      activeImage.timing === 'DISCHARGE' || activeImage.timing === 'POST_OP'
+                        ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                        : 'bg-cyan-950 text-cyan-300 border border-cyan-800'
+                    }`}
+                  >
+                    {activeImage.timing === 'DISCHARGE' || activeImage.timing === 'POST_OP'
+                      ? 'KHI XUẤT VIỆN'
+                      : 'TRƯỚC MỔ'}
+                  </span>
+                  <span className="text-xs font-bold text-white">{activeImage.title}</span>
+                </div>
                 <button onClick={() => setActiveImage(null)} className="text-slate-400 hover:text-white p-1">
                   <X className="w-4 h-4" />
                 </button>

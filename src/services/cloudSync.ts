@@ -1,9 +1,9 @@
 import {
-  arrayRemove,
-  arrayUnion,
   collection,
+  deleteDoc,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   onSnapshot,
   query,
@@ -11,22 +11,20 @@ import {
   setDoc,
   updateDoc,
   where,
+  writeBatch,
   Unsubscribe,
 } from 'firebase/firestore';
-import { User } from 'firebase/auth';
-import { firestoreDb, handleFirestoreError, OperationType } from '../firebase';
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut,
+  updateProfile,
+  User,
+} from 'firebase/auth';
+import { auth, firestoreDb, getGuestCreatorAuth, handleFirestoreError, OperationType } from '../firebase';
 import { db } from '../db/indexedDB';
-import { ClinicalImage, PatientCase } from '../types/medical';
+import { AppAccount, ClinicalImage, PatientCase } from '../types/medical';
 import { compressImageToDataUrl } from '../utils/imageCompression';
-
-export interface SharedWorkspace {
-  id: string;
-  name: string;
-  ownerId: string;
-  inviteCode: string;
-  memberUids: string[];
-  memberEmails: string[];
-}
 
 function sanitizeId(rawId: string): string {
   const cleaned = (rawId || 'id').replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 128);
@@ -66,17 +64,418 @@ function stripUndefined<T>(value: T): T {
   return value;
 }
 
-function normalizeEmail(email: string | null | undefined): string {
-  return (email || '').trim().toLowerCase().slice(0, 320);
+export function normalizeAccountIdentifier(rawInput: string): {
+  username: string;
+  email: string;
+} {
+  const cleaned = (rawInput || '').trim().toLowerCase();
+  if (!cleaned) {
+    throw new Error('Vui lòng nhập tên đăng nhập hoặc email.');
+  }
+  if (cleaned.includes('@')) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleaned) || cleaned.length > 320) {
+      throw new Error('Địa chỉ email không hợp lệ.');
+    }
+    return {
+      username: cleaned.slice(0, 160),
+      email: cleaned,
+    };
+  }
+  if (!/^[a-z0-9._-]{3,40}$/.test(cleaned)) {
+    throw new Error(
+      'Tên đăng nhập chỉ dùng chữ không dấu (a-z), số (0-9), dấu chấm (.), gạch dưới (_) hoặc gạch ngang (-), dài 3-40 ký tự.'
+    );
+  }
+  return {
+    username: cleaned,
+    email: `${cleaned}@rhinolog.local`,
+  };
 }
 
-function generateInviteCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let suffix = '';
-  for (let i = 0; i < 6; i++) {
-    suffix += chars.charAt(Math.floor(Math.random() * chars.length));
+export function mapAuthErrorMessage(err: any): string {
+  const code = err?.code || '';
+  if (code === 'auth/operation-not-allowed') {
+    return 'Chức năng đăng nhập bằng Tài khoản/Mật khẩu (Email/Password) chưa được bật trên Firebase Console. Vui lòng vào Firebase Console -> Authentication -> Sign-in method -> bật Email/Password.';
   }
-  return `RHINO-${suffix}`;
+  if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
+    return 'Tên đăng nhập/email hoặc mật khẩu không đúng.';
+  }
+  if (code === 'auth/email-already-in-use') {
+    return 'Tên đăng nhập hoặc email này đã tồn tại trong hệ thống.';
+  }
+  if (code === 'auth/weak-password') {
+    return 'Mật khẩu quá yếu. Vui lòng nhập tối thiểu 6 ký tự.';
+  }
+  if (code === 'auth/too-many-requests') {
+    return 'Thao tác quá nhiều lần liên tiếp. Vui lòng đợi vài phút rồi thử lại.';
+  }
+  if (code === 'auth/network-request-failed') {
+    return 'Không thể kết nối máy chủ xác thực. Vui lòng kiểm tra kết nối Internet.';
+  }
+  return err?.message || 'Lỗi xác thực tài khoản. Vui lòng thử lại.';
+}
+
+export async function checkAdminInitialized(): Promise<{
+  initialized: boolean;
+  adminUid: string | null;
+}> {
+  const ref = doc(firestoreDb, 'appMeta', 'bootstrap');
+  try {
+    const snap = navigator.onLine ? await getDocFromServer(ref) : await getDoc(ref);
+    if (snap.exists() && snap.data().initialized === true) {
+      return {
+        initialized: true,
+        adminUid: typeof snap.data().adminUid === 'string' ? snap.data().adminUid : null,
+      };
+    }
+    return { initialized: false, adminUid: null };
+  } catch {
+    try {
+      const cached = await getDoc(ref);
+      if (cached.exists() && cached.data().initialized === true) {
+        return {
+          initialized: true,
+          adminUid: typeof cached.data().adminUid === 'string' ? cached.data().adminUid : null,
+        };
+      }
+    } catch {
+      // ignore offline cache miss
+    }
+    return { initialized: false, adminUid: null };
+  }
+}
+
+export async function fetchAppAccount(uid: string): Promise<AppAccount | null> {
+  const accPath = `accounts/${uid}`;
+  try {
+    const snap = await getDoc(doc(firestoreDb, 'accounts', uid));
+    if (!snap.exists()) return null;
+    const d = snap.data();
+    return {
+      uid: d.uid || uid,
+      username: d.username || d.email || uid,
+      email: d.email || '',
+      displayName: d.displayName || d.username || 'Bác sĩ',
+      role: d.role === 'admin' ? 'admin' : 'guest',
+      adminUid: d.adminUid || uid,
+      active: d.active === true,
+    };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, accPath);
+  }
+}
+
+export async function bootstrapAdminAccount(
+  identifier: string,
+  password: string,
+  displayName: string
+): Promise<AppAccount> {
+  const { username, email } = normalizeAccountIdentifier(identifier);
+  if (!password || password.length < 6) {
+    throw new Error('Mật khẩu Admin phải có ít nhất 6 ký tự.');
+  }
+  const cleanName = clampStr(displayName.trim(), 160, username) || username;
+
+  const currentStatus = await checkAdminInitialized();
+  if (currentStatus.initialized) {
+    throw new Error('Tài khoản Admin đã được khởi tạo trước đó. Vui lòng chuyển sang Đăng nhập.');
+  }
+
+  let fbUser: User;
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    fbUser = cred.user;
+  } catch (err: any) {
+    if (err?.code === 'auth/email-already-in-use') {
+      try {
+        const signInCred = await signInWithEmailAndPassword(auth, email, password);
+        fbUser = signInCred.user;
+      } catch (signInErr: any) {
+        throw new Error(mapAuthErrorMessage(signInErr));
+      }
+    } else {
+      throw new Error(mapAuthErrorMessage(err));
+    }
+  }
+
+  try {
+    await updateProfile(fbUser, { displayName: cleanName });
+  } catch {
+    // Non-fatal
+  }
+
+  try {
+    const batch = writeBatch(firestoreDb);
+    batch.set(doc(firestoreDb, 'appMeta', 'bootstrap'), {
+      id: 'bootstrap',
+      initialized: true,
+      adminUid: fbUser.uid,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(firestoreDb, 'admins', fbUser.uid), {
+      uid: fbUser.uid,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(firestoreDb, 'accounts', fbUser.uid), {
+      uid: fbUser.uid,
+      username,
+      email,
+      displayName: cleanName,
+      role: 'admin',
+      adminUid: fbUser.uid,
+      active: true,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    await batch.commit();
+  } catch (error) {
+    await signOut(auth);
+    handleFirestoreError(error, OperationType.WRITE, `accounts/${fbUser.uid}`);
+  }
+
+  // Mark any local unsynced cases for upload
+  const allLocal = await db.cases.toArray();
+  for (const c of allLocal) {
+    if (!c.syncedToCloud) {
+      await db.cases.update(c.id, { syncedToCloud: false });
+    }
+  }
+
+  return {
+    uid: fbUser.uid,
+    username,
+    email,
+    displayName: cleanName,
+    role: 'admin',
+    adminUid: fbUser.uid,
+    active: true,
+  };
+}
+
+export async function signInWithSelfAccount(
+  identifier: string,
+  password: string
+): Promise<AppAccount> {
+  const { email } = normalizeAccountIdentifier(identifier);
+  if (!password) {
+    throw new Error('Vui lòng nhập mật khẩu.');
+  }
+
+  let fbUser: User;
+  try {
+    const cred = await signInWithEmailAndPassword(auth, email, password);
+    fbUser = cred.user;
+  } catch (err: any) {
+    throw new Error(mapAuthErrorMessage(err));
+  }
+
+  const acc = await fetchAppAccount(fbUser.uid);
+  if (!acc) {
+    await signOut(auth);
+    throw new Error('Tài khoản này chưa được Admin cấp quyền trong hệ thống.');
+  }
+  if (!acc.active) {
+    await signOut(auth);
+    throw new Error('Tài khoản khách này đã bị Admin tạm khóa quyền truy cập.');
+  }
+  return acc;
+}
+
+export async function fetchManagedAccounts(adminUid: string): Promise<AppAccount[]> {
+  if (!navigator.onLine) return [];
+  const accPath = 'accounts';
+  try {
+    const snap = await getDocs(
+      query(collection(firestoreDb, 'accounts'), where('adminUid', '==', adminUid))
+    );
+    const list: AppAccount[] = [];
+    snap.forEach((d) => {
+      const data = d.data();
+      list.push({
+        uid: data.uid || d.id,
+        username: data.username || data.email || d.id,
+        email: data.email || '',
+        displayName: data.displayName || data.username || 'Khách',
+        role: data.role === 'admin' ? 'admin' : 'guest',
+        adminUid: data.adminUid || adminUid,
+        active: data.active === true,
+      });
+    });
+    list.sort((a, b) => (a.role === 'admin' ? -1 : b.role === 'admin' ? 1 : a.username.localeCompare(b.username)));
+    return list;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, accPath);
+  }
+}
+
+export async function getActiveAuthorizedUids(adminAccount: AppAccount): Promise<string[]> {
+  if (adminAccount.role !== 'admin') {
+    return [adminAccount.adminUid, adminAccount.uid];
+  }
+  try {
+    const accounts = await fetchManagedAccounts(adminAccount.uid);
+    const uids = new Set<string>([adminAccount.uid]);
+    for (const acc of accounts) {
+      if (acc.active && uids.size < 50) {
+        uids.add(acc.uid);
+      }
+    }
+    return Array.from(uids);
+  } catch {
+    return [adminAccount.uid];
+  }
+}
+
+export async function syncAuthorizedUidsToAllCases(
+  adminAccount: AppAccount,
+  overrideUids?: string[]
+): Promise<void> {
+  if (!navigator.onLine || adminAccount.role !== 'admin') return;
+  const targetUids = (overrideUids || (await getActiveAuthorizedUids(adminAccount))).slice(0, 50);
+  if (!targetUids.includes(adminAccount.uid)) {
+    targetUids.unshift(adminAccount.uid);
+  }
+
+  const casesCol = collection(firestoreDb, 'clinicCases');
+  try {
+    const snap = await getDocs(query(casesCol, where('adminUid', '==', adminAccount.uid)));
+    for (const d of snap.docs) {
+      const data = d.data();
+      const existingUids: string[] = Array.isArray(data.authorizedUids) ? data.authorizedUids : [];
+      const needsUpdate =
+        existingUids.length !== targetUids.length ||
+        targetUids.some((u) => !existingUids.includes(u)) ||
+        existingUids.some((u) => !targetUids.includes(u));
+
+      if (needsUpdate) {
+        await updateDoc(d.ref, {
+          authorizedUids: targetUids,
+          updatedAt: serverTimestamp(),
+        });
+
+        const imgsCol = collection(firestoreDb, 'clinicCases', d.id, 'images');
+        const imgSnap = await getDocs(query(imgsCol, where('adminUid', '==', adminAccount.uid)));
+        for (const imgDoc of imgSnap.docs) {
+          await updateDoc(imgDoc.ref, {
+            authorizedUids: targetUids,
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, 'clinicCases');
+  }
+}
+
+export async function createGuestAccount(
+  adminAccount: AppAccount,
+  identifier: string,
+  password: string,
+  displayName: string
+): Promise<AppAccount> {
+  if (adminAccount.role !== 'admin') {
+    throw new Error('Chỉ tài khoản Admin mới có quyền tạo tài khoản khách.');
+  }
+  const { username, email } = normalizeAccountIdentifier(identifier);
+  if (!password || password.length < 6) {
+    throw new Error('Mật khẩu tài khoản khách phải có ít nhất 6 ký tự.');
+  }
+  const cleanName = clampStr(displayName.trim(), 160, username) || username;
+
+  const existingAccounts = await fetchManagedAccounts(adminAccount.uid);
+  if (existingAccounts.length >= 50) {
+    throw new Error('Hệ thống đã đạt giới hạn tối đa 50 tài khoản.');
+  }
+  if (existingAccounts.some((a) => a.email === email || a.username === username)) {
+    throw new Error('Tên đăng nhập hoặc email này đã tồn tại.');
+  }
+
+  const guestAuth = getGuestCreatorAuth();
+  let guestUid = '';
+  try {
+    const cred = await createUserWithEmailAndPassword(guestAuth, email, password);
+    guestUid = cred.user.uid;
+    try {
+      await updateProfile(cred.user, { displayName: cleanName });
+    } catch {
+      // Non-fatal
+    }
+  } catch (err: any) {
+    throw new Error(mapAuthErrorMessage(err));
+  } finally {
+    try {
+      await signOut(guestAuth);
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  const guestPath = `accounts/${guestUid}`;
+  try {
+    await setDoc(doc(firestoreDb, 'accounts', guestUid), {
+      uid: guestUid,
+      username,
+      email,
+      displayName: cleanName,
+      role: 'guest',
+      adminUid: adminAccount.uid,
+      active: true,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, guestPath);
+  }
+
+  await syncAuthorizedUidsToAllCases(adminAccount);
+
+  return {
+    uid: guestUid,
+    username,
+    email,
+    displayName: cleanName,
+    role: 'guest',
+    adminUid: adminAccount.uid,
+    active: true,
+  };
+}
+
+export async function setGuestAccountActive(
+  adminAccount: AppAccount,
+  guestUid: string,
+  active: boolean
+): Promise<void> {
+  if (adminAccount.role !== 'admin' || guestUid === adminAccount.uid) return;
+  const path = `accounts/${guestUid}`;
+  try {
+    await updateDoc(doc(firestoreDb, 'accounts', guestUid), {
+      active,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+  await syncAuthorizedUidsToAllCases(adminAccount);
+}
+
+export async function removeGuestAccount(
+  adminAccount: AppAccount,
+  guestUid: string
+): Promise<void> {
+  if (adminAccount.role !== 'admin' || guestUid === adminAccount.uid) return;
+  const currentUids = await getActiveAuthorizedUids(adminAccount);
+  const filteredUids = currentUids.filter((u) => u !== guestUid);
+  await syncAuthorizedUidsToAllCases(adminAccount, filteredUids);
+
+  const path = `accounts/${guestUid}`;
+  try {
+    await deleteDoc(doc(firestoreDb, 'accounts', guestUid));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
 }
 
 function buildCasePayload(c: PatientCase) {
@@ -114,391 +513,23 @@ function buildCasePayload(c: PatientCase) {
   return stripUndefined(payload);
 }
 
-export async function ensureUserProfile(user: User): Promise<{ activeWorkspaceId: string | null }> {
-  if (!navigator.onLine) return { activeWorkspaceId: null };
-  const userPath = `users/${user.uid}`;
-  const userRef = doc(firestoreDb, 'users', user.uid);
-  const email = normalizeEmail(user.email) || 'unknown@example.com';
-  const displayName = clampStr(user.displayName || user.email, 160, 'Bác sĩ');
-  const photoURL = user.photoURL ? clampStr(user.photoURL, 1000) : null;
-
-  try {
-    const snap = await getDoc(userRef);
-    if (!snap.exists()) {
-      await setDoc(userRef, {
-        uid: user.uid,
-        email,
-        displayName,
-        photoURL,
-        activeWorkspaceId: null,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      return { activeWorkspaceId: null };
-    } else {
-      const data = snap.data();
-      await updateDoc(userRef, {
-        email,
-        displayName,
-        photoURL,
-        updatedAt: serverTimestamp(),
-      });
-      return {
-        activeWorkspaceId:
-          typeof data.activeWorkspaceId === 'string' && data.activeWorkspaceId.length > 0
-            ? data.activeWorkspaceId
-            : null,
-      };
-    }
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, userPath);
-  }
-}
-
-export async function setUserActiveWorkspace(
-  uid: string,
-  workspaceId: string | null
-): Promise<void> {
-  if (!navigator.onLine) return;
-  const userPath = `users/${uid}`;
-  const userRef = doc(firestoreDb, 'users', uid);
-  try {
-    await updateDoc(userRef, {
-      activeWorkspaceId: workspaceId,
-      updatedAt: serverTimestamp(),
-    });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, userPath);
-  }
-}
-
-function docToWorkspace(data: Record<string, any>, fallbackId: string): SharedWorkspace {
-  return {
-    id: data.id || fallbackId,
-    name: data.name || 'Kho chung',
-    ownerId: data.ownerId || '',
-    inviteCode: data.inviteCode || '',
-    memberUids: Array.isArray(data.memberUids) ? data.memberUids : [],
-    memberEmails: Array.isArray(data.memberEmails) ? data.memberEmails : [],
-  };
-}
-
-export async function discoverWorkspaceForUser(user: User): Promise<SharedWorkspace | null> {
-  if (!navigator.onLine) return null;
-
-  const userEmail = normalizeEmail(user.email);
-  const { activeWorkspaceId } = await ensureUserProfile(user);
-
-  // 1. Check explicitly selected activeWorkspaceId first
-  if (activeWorkspaceId) {
-    const wsPath = `workspaces/${activeWorkspaceId}`;
-    try {
-      const wsSnap = await getDoc(doc(firestoreDb, 'workspaces', activeWorkspaceId));
-      if (wsSnap.exists()) {
-        const ws = docToWorkspace(wsSnap.data(), wsSnap.id);
-        if (ws.memberUids.includes(user.uid) || ws.memberEmails.includes(userEmail)) {
-          if (!ws.memberUids.includes(user.uid) && ws.memberUids.length < 20) {
-            await updateDoc(doc(firestoreDb, 'workspaces', ws.id), {
-              memberUids: arrayUnion(user.uid),
-              updatedAt: serverTimestamp(),
-            });
-            ws.memberUids = [...ws.memberUids, user.uid];
-          }
-          return ws;
-        }
-      }
-    } catch {
-      // User may have been removed from old workspace or workspace deleted; fall through to discovery
-    }
-  }
-
-  // 2. Auto-discover any shared workspace where user's email or uid is authorized
-  try {
-    const wsCol = collection(firestoreDb, 'workspaces');
-    const byEmailSnap = userEmail
-      ? await getDocs(query(wsCol, where('memberEmails', 'array-contains', userEmail)))
-      : null;
-
-    let matchedDoc = byEmailSnap?.docs[0] || null;
-
-    if (!matchedDoc) {
-      const byUidSnap = await getDocs(
-        query(wsCol, where('memberUids', 'array-contains', user.uid))
-      );
-      matchedDoc = byUidSnap.docs[0] || null;
-    }
-
-    if (matchedDoc) {
-      const ws = docToWorkspace(matchedDoc.data(), matchedDoc.id);
-      if (!ws.memberUids.includes(user.uid) && ws.memberUids.length < 20) {
-        await updateDoc(doc(firestoreDb, 'workspaces', ws.id), {
-          memberUids: arrayUnion(user.uid),
-          updatedAt: serverTimestamp(),
-        });
-        ws.memberUids = [...ws.memberUids, user.uid];
-      }
-      await setUserActiveWorkspace(user.uid, ws.id);
-      return ws;
-    }
-  } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, 'workspaces');
-  }
-
-  return null;
-}
-
-export async function createSharedWorkspace(
-  user: User,
-  name: string
-): Promise<SharedWorkspace> {
-  const userEmail = normalizeEmail(user.email);
-  const workspaceId = sanitizeId(`ws-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
-  const inviteCode = generateInviteCode();
-  const cleanName = clampStr(name.trim(), 120, 'Kho nghiên cứu chung') || 'Kho nghiên cứu chung';
-
-  const wsPath = `workspaces/${workspaceId}`;
-  const invitePath = `workspaceInvites/${inviteCode}`;
-
-  try {
-    await setDoc(doc(firestoreDb, 'workspaces', workspaceId), {
-      id: workspaceId,
-      name: cleanName,
-      ownerId: user.uid,
-      inviteCode,
-      memberUids: [user.uid],
-      memberEmails: [userEmail],
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, wsPath);
-  }
-
-  try {
-    await setDoc(doc(firestoreDb, 'workspaceInvites', inviteCode), {
-      inviteCode,
-      workspaceId,
-      workspaceName: cleanName,
-      ownerId: user.uid,
-      active: true,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, invitePath);
-  }
-
-  await setUserActiveWorkspace(user.uid, workspaceId);
-
-  // Mark all current local cases unsynced so they upload into this newly created shared workspace
-  const allLocal = await db.cases.toArray();
-  for (const c of allLocal) {
-    await db.cases.update(c.id, { syncedToCloud: false });
-  }
-
-  return {
-    id: workspaceId,
-    name: cleanName,
-    ownerId: user.uid,
-    inviteCode,
-    memberUids: [user.uid],
-    memberEmails: [userEmail],
-  };
-}
-
-export async function joinWorkspaceByInviteCode(
-  user: User,
-  rawCode: string
-): Promise<SharedWorkspace> {
-  const inviteCode = rawCode.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
-  if (inviteCode.length < 4) {
-    throw new Error('Mã nhóm không hợp lệ (ví dụ: RHINO-ABC123).');
-  }
-
-  const invitePath = `workspaceInvites/${inviteCode}`;
-  let workspaceId = '';
-
-  try {
-    const inviteSnap = await getDoc(doc(firestoreDb, 'workspaceInvites', inviteCode));
-    if (!inviteSnap.exists() || inviteSnap.data().active !== true) {
-      throw new Error('Không tìm thấy mã nhóm này hoặc mã đã bị vô hiệu hóa.');
-    }
-    workspaceId = inviteSnap.data().workspaceId;
-  } catch (error: any) {
-    if (error?.message?.includes('Không tìm thấy mã nhóm')) throw error;
-    handleFirestoreError(error, OperationType.GET, invitePath);
-  }
-
-  const userEmail = normalizeEmail(user.email);
-  const wsPath = `workspaces/${workspaceId}`;
-
-  try {
-    // Append self directly via arrayUnion without needing prior get()
-    await updateDoc(doc(firestoreDb, 'workspaces', workspaceId), {
-      memberUids: arrayUnion(user.uid),
-      memberEmails: arrayUnion(userEmail),
-      updatedAt: serverTimestamp(),
-    });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, wsPath);
-  }
-
-  await setUserActiveWorkspace(user.uid, workspaceId);
-
-  try {
-    const wsSnap = await getDoc(doc(firestoreDb, 'workspaces', workspaceId));
-    if (!wsSnap.exists()) {
-      throw new Error('Không thể đọc thông tin kho chung sau khi tham gia.');
-    }
-    return docToWorkspace(wsSnap.data(), wsSnap.id);
-  } catch (error) {
-    handleFirestoreError(error, OperationType.GET, wsPath);
-  }
-}
-
-export async function propagateWorkspaceMembersToCases(
-  workspace: SharedWorkspace
-): Promise<void> {
-  if (!navigator.onLine) return;
-  const casesPath = `workspaces/${workspace.id}/cases`;
-  const casesCol = collection(firestoreDb, 'workspaces', workspace.id, 'cases');
-
-  try {
-    const snap = await getDocs(query(casesCol, where('memberUids', 'array-contains', workspace.ownerId)));
-    for (const d of snap.docs) {
-      const data = d.data();
-      const existingEmails: string[] = Array.isArray(data.memberEmails) ? data.memberEmails : [];
-      const existingUids: string[] = Array.isArray(data.memberUids) ? data.memberUids : [];
-      const needsUpdate =
-        existingEmails.length !== workspace.memberEmails.length ||
-        existingUids.length !== workspace.memberUids.length ||
-        workspace.memberEmails.some((e) => !existingEmails.includes(e)) ||
-        workspace.memberUids.some((u) => !existingUids.includes(u));
-
-      if (needsUpdate) {
-        await updateDoc(d.ref, {
-          memberUids: workspace.memberUids.slice(0, 20),
-          memberEmails: workspace.memberEmails.slice(0, 20),
-          updatedAt: serverTimestamp(),
-        });
-
-        // Propagate to images under this case as well
-        const imgsCol = collection(firestoreDb, 'workspaces', workspace.id, 'cases', d.id, 'images');
-        const imgSnap = await getDocs(query(imgsCol, where('memberUids', 'array-contains', workspace.ownerId)));
-        for (const imgDoc of imgSnap.docs) {
-          await updateDoc(imgDoc.ref, {
-            memberUids: workspace.memberUids.slice(0, 20),
-            memberEmails: workspace.memberEmails.slice(0, 20),
-            updatedAt: serverTimestamp(),
-          });
-        }
-      }
-    }
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, casesPath);
-  }
-}
-
-export async function addMemberEmailToWorkspace(
-  workspace: SharedWorkspace,
-  rawEmail: string
-): Promise<SharedWorkspace> {
-  const email = normalizeEmail(rawEmail);
-  if (!email || !email.includes('@')) {
-    throw new Error('Vui lòng nhập địa chỉ Gmail hợp lệ.');
-  }
-  if (workspace.memberEmails.includes(email)) {
-    return workspace;
-  }
-  if (workspace.memberEmails.length >= 20) {
-    throw new Error('Kho chung đạt giới hạn tối đa 20 tài khoản.');
-  }
-
-  const nextEmails = [...workspace.memberEmails, email];
-  const wsPath = `workspaces/${workspace.id}`;
-
-  try {
-    await updateDoc(doc(firestoreDb, 'workspaces', workspace.id), {
-      memberEmails: nextEmails,
-      updatedAt: serverTimestamp(),
-    });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, wsPath);
-  }
-
-  const updated: SharedWorkspace = { ...workspace, memberEmails: nextEmails };
-  await propagateWorkspaceMembersToCases(updated);
-  return updated;
-}
-
-export async function removeMemberEmailFromWorkspace(
-  workspace: SharedWorkspace,
-  rawEmail: string
-): Promise<SharedWorkspace> {
-  const email = normalizeEmail(rawEmail);
-  const nextEmails = workspace.memberEmails.filter((e) => e !== email);
-  if (nextEmails.length === 0) {
-    throw new Error('Không thể xóa chủ sở hữu khỏi kho chung.');
-  }
-
-  const wsPath = `workspaces/${workspace.id}`;
-  try {
-    await updateDoc(doc(firestoreDb, 'workspaces', workspace.id), {
-      memberEmails: arrayRemove(email),
-      updatedAt: serverTimestamp(),
-    });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, wsPath);
-  }
-
-  const updated: SharedWorkspace = { ...workspace, memberEmails: nextEmails };
-  await propagateWorkspaceMembersToCases(updated);
-  return updated;
-}
-
-export function subscribeToWorkspace(
-  workspaceId: string,
-  currentUserId: string,
-  onUpdated: (ws: SharedWorkspace) => void
-): Unsubscribe {
-  const wsPath = `workspaces/${workspaceId}`;
-  return onSnapshot(
-    doc(firestoreDb, 'workspaces', workspaceId),
-    async (snap) => {
-      if (!snap.exists()) return;
-      const ws = docToWorkspace(snap.data(), snap.id);
-      onUpdated(ws);
-      if (ws.ownerId === currentUserId) {
-        await propagateWorkspaceMembersToCases(ws);
-      }
-    },
-    (error) => {
-      handleFirestoreError(error, OperationType.GET, wsPath);
-    }
-  );
-}
-
 async function syncCaseImagesToCloud(
-  user: User,
+  account: AppAccount,
   caseId: string,
   ctScanImages: ClinicalImage[],
   endoscopyImages: ClinicalImage[],
-  workspace: SharedWorkspace | null
+  clinicalImages: ClinicalImage[],
+  authorizedUids: string[]
 ): Promise<void> {
-  const userEmail = normalizeEmail(user.email);
-  const imagesColPath = workspace
-    ? `workspaces/${workspace.id}/cases/${caseId}/images`
-    : `users/${user.uid}/cases/${caseId}/images`;
-
-  const imagesColRef = workspace
-    ? collection(firestoreDb, 'workspaces', workspace.id, 'cases', caseId, 'images')
-    : collection(firestoreDb, 'users', user.uid, 'cases', caseId, 'images');
+  const imagesColPath = `clinicCases/${caseId}/images`;
+  const imagesColRef = collection(firestoreDb, 'clinicCases', caseId, 'images');
 
   const existingRemoteIds = new Set<string>();
   try {
-    const q = workspace
-      ? query(imagesColRef, where('memberEmails', 'array-contains', userEmail))
-      : query(imagesColRef, where('ownerId', '==', user.uid));
+    const q =
+      account.role === 'admin'
+        ? query(imagesColRef, where('adminUid', '==', account.uid))
+        : query(imagesColRef, where('authorizedUids', 'array-contains', account.uid));
     const snap = await getDocs(q);
     snap.forEach((d) => {
       const data = d.data();
@@ -510,25 +541,32 @@ async function syncCaseImagesToCloud(
     handleFirestoreError(error, OperationType.LIST, imagesColPath);
   }
 
-  const allLocalImages = [...(ctScanImages || []), ...(endoscopyImages || [])];
+  const allLocalImages = [
+    ...(ctScanImages || []),
+    ...(endoscopyImages || []),
+    ...(clinicalImages || []),
+  ];
   const activeLocalIds = new Set<string>();
 
   for (const img of allLocalImages) {
     const safeImgId = sanitizeId(img.id);
     activeLocalIds.add(safeImgId);
     const imgPath = `${imagesColPath}/${safeImgId}`;
-    const imgRef = workspace
-      ? doc(firestoreDb, 'workspaces', workspace.id, 'cases', caseId, 'images', safeImgId)
-      : doc(firestoreDb, 'users', user.uid, 'cases', caseId, 'images', safeImgId);
+    const imgRef = doc(firestoreDb, 'clinicCases', caseId, 'images', safeImgId);
 
     const compactDataUrl = await compressImageToDataUrl(img.dataUrl);
     const safeDataUrl = compactDataUrl.slice(0, 745000);
 
     try {
       const imgSnap = await getDoc(imgRef);
+      const safeType =
+        img.type === 'ENDOSCOPY' || img.type === 'CLINICAL_PHOTO' ? img.type : 'CT_SCAN';
+      const safeTiming =
+        img.timing === 'DISCHARGE' || img.timing === 'POST_OP' ? img.timing : 'PRE_OP';
+
       const baseFields = {
-        type: img.type === 'ENDOSCOPY' ? 'ENDOSCOPY' : 'CT_SCAN',
-        timing: img.timing === 'POST_OP' ? 'POST_OP' : 'PRE_OP',
+        type: safeType,
+        timing: safeTiming,
         title: clampStr(img.title, 200, ''),
         notes: clampStr(img.notes, 1000, ''),
         dataUrl: safeDataUrl,
@@ -539,15 +577,10 @@ async function syncCaseImagesToCloud(
       if (!imgSnap.exists()) {
         await setDoc(imgRef, {
           id: safeImgId,
-          ...(workspace
-            ? {
-                workspaceId: workspace.id,
-                memberUids: workspace.memberUids.slice(0, 20),
-                memberEmails: workspace.memberEmails.slice(0, 20),
-              }
-            : {}),
-          ownerId: user.uid,
+          adminUid: account.adminUid,
+          ownerId: account.uid,
           caseId,
+          authorizedUids: authorizedUids.slice(0, 50),
           ...baseFields,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -562,11 +595,8 @@ async function syncCaseImagesToCloud(
           existingData.dataUrl !== baseFields.dataUrl
         ) {
           await updateDoc(imgRef, {
-            ...(workspace
-              ? {
-                  memberUids: workspace.memberUids.slice(0, 20),
-                  memberEmails: workspace.memberEmails.slice(0, 20),
-                }
+            ...(account.role === 'admin'
+              ? { authorizedUids: authorizedUids.slice(0, 50) }
               : {}),
             ...baseFields,
             updatedAt: serverTimestamp(),
@@ -581,9 +611,7 @@ async function syncCaseImagesToCloud(
   for (const remoteImgId of existingRemoteIds) {
     if (!activeLocalIds.has(remoteImgId)) {
       const imgPath = `${imagesColPath}/${remoteImgId}`;
-      const imgRef = workspace
-        ? doc(firestoreDb, 'workspaces', workspace.id, 'cases', caseId, 'images', remoteImgId)
-        : doc(firestoreDb, 'users', user.uid, 'cases', caseId, 'images', remoteImgId);
+      const imgRef = doc(firestoreDb, 'clinicCases', caseId, 'images', remoteImgId);
       try {
         await updateDoc(imgRef, {
           deleted: true,
@@ -598,102 +626,270 @@ async function syncCaseImagesToCloud(
 }
 
 export async function pushCaseToCloud(
-  user: User,
+  account: AppAccount,
   patientCase: PatientCase,
-  workspace: SharedWorkspace | null = null
+  cachedAuthorizedUids?: string[]
 ): Promise<boolean> {
   if (!navigator.onLine) return false;
 
-  const userEmail = normalizeEmail(user.email);
   const safeCaseId = sanitizeId(patientCase.id);
-  const casePath = workspace
-    ? `workspaces/${workspace.id}/cases/${safeCaseId}`
-    : `users/${user.uid}/cases/${safeCaseId}`;
-  const caseRef = workspace
-    ? doc(firestoreDb, 'workspaces', workspace.id, 'cases', safeCaseId)
-    : doc(firestoreDb, 'users', user.uid, 'cases', safeCaseId);
+  const casePath = `clinicCases/${safeCaseId}`;
+  const caseRef = doc(firestoreDb, 'clinicCases', safeCaseId);
+  const authorizedUids = cachedAuthorizedUids || (await getActiveAuthorizedUids(account));
+  const editorLabel = clampStr(
+    patientCase.lastEditedBy || `${account.displayName} (${account.username})`,
+    160,
+    account.username
+  );
 
   const clientCreatedAt =
     typeof patientCase.createdAt === 'number' ? patientCase.createdAt : Date.now();
   const clientUpdatedAt =
     typeof patientCase.updatedAt === 'number' ? patientCase.updatedAt : Date.now();
 
-  const mutableFields = {
-    caseCode: clampStr(patientCase.caseCode, 64, 'UNKNOWN') || 'UNKNOWN',
-    surgeryDate: sanitizeDate(patientCase.surgeryDate),
-    primaryDiagnosis: clampStr(patientCase.primaryDiagnosis, 500, ''),
-    surgeryType: clampStr(patientCase.surgeryType, 300, ''),
-    complexityGrade: clampStr(patientCase.complexityGrade, 120, 'Grade I — Cơ bản'),
-    totalLundMackayScore: clampNum(patientCase.totalLundMackayScore, 0, 24, 0),
-    clientUpdatedAt,
-    deleted: false,
-    casePayload: buildCasePayload(patientCase),
-    updatedAt: serverTimestamp(),
-    ...(workspace
-      ? {
-          lastEditedByEmail: userEmail,
-          memberUids: workspace.memberUids.slice(0, 20),
-          memberEmails: workspace.memberEmails.slice(0, 20),
-        }
-      : {}),
-  };
+  const isTrashed = patientCase.isTrashed === true;
+  const trashedAt = isTrashed ? patientCase.trashedAt || Date.now() : null;
+  const trashedBy = isTrashed
+    ? clampStr(patientCase.trashedBy || editorLabel, 160, editorLabel)
+    : null;
 
   try {
     const existingSnap = await getDoc(caseRef);
     if (!existingSnap.exists()) {
       await setDoc(caseRef, {
         id: safeCaseId,
-        ownerId: user.uid,
-        ...(workspace ? { workspaceId: workspace.id } : {}),
+        adminUid: account.adminUid,
+        ownerId: account.uid,
+        lastEditedBy: editorLabel,
+        authorizedUids: authorizedUids.slice(0, 50),
+        isTrashed: false,
+        trashedAt: null,
+        trashedBy: null,
+        deleted: false,
+        caseCode: clampStr(patientCase.caseCode, 64, 'UNKNOWN') || 'UNKNOWN',
+        surgeryDate: sanitizeDate(patientCase.surgeryDate),
+        primaryDiagnosis: clampStr(patientCase.primaryDiagnosis, 500, ''),
+        surgeryType: clampStr(patientCase.surgeryType, 300, ''),
+        complexityGrade: clampStr(patientCase.complexityGrade, 120, 'Grade I — Cơ bản'),
+        totalLundMackayScore: clampNum(patientCase.totalLundMackayScore, 0, 24, 0),
         clientCreatedAt,
-        ...mutableFields,
+        clientUpdatedAt,
+        casePayload: buildCasePayload(patientCase),
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      if (isTrashed) {
+        await updateDoc(caseRef, {
+          lastEditedBy: editorLabel,
+          isTrashed: true,
+          trashedAt,
+          trashedBy,
+          clientUpdatedAt,
+          updatedAt: serverTimestamp(),
+        });
+      }
+    } else if (isTrashed && account.role === 'guest') {
+      await updateDoc(caseRef, {
+        lastEditedBy: editorLabel,
+        isTrashed: true,
+        trashedAt,
+        trashedBy,
+        clientUpdatedAt,
+        updatedAt: serverTimestamp(),
       });
     } else {
-      await updateDoc(caseRef, mutableFields);
+      const updateBody: Record<string, unknown> = {
+        lastEditedBy: editorLabel,
+        caseCode: clampStr(patientCase.caseCode, 64, 'UNKNOWN') || 'UNKNOWN',
+        surgeryDate: sanitizeDate(patientCase.surgeryDate),
+        primaryDiagnosis: clampStr(patientCase.primaryDiagnosis, 500, ''),
+        surgeryType: clampStr(patientCase.surgeryType, 300, ''),
+        complexityGrade: clampStr(patientCase.complexityGrade, 120, 'Grade I — Cơ bản'),
+        totalLundMackayScore: clampNum(patientCase.totalLundMackayScore, 0, 24, 0),
+        clientUpdatedAt,
+        casePayload: buildCasePayload(patientCase),
+        updatedAt: serverTimestamp(),
+      };
+
+      if (account.role === 'admin') {
+        updateBody.authorizedUids = authorizedUids.slice(0, 50);
+        updateBody.isTrashed = isTrashed;
+        updateBody.trashedAt = trashedAt;
+        updateBody.trashedBy = trashedBy;
+        updateBody.deleted = false;
+      }
+
+      await updateDoc(caseRef, updateBody);
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, casePath);
   }
 
-  await syncCaseImagesToCloud(
-    user,
-    safeCaseId,
-    patientCase.images?.ctScanImages || [],
-    patientCase.images?.endoscopyImages || [],
-    workspace
-  );
+  if (!isTrashed) {
+    await syncCaseImagesToCloud(
+      account,
+      safeCaseId,
+      patientCase.images?.ctScanImages || [],
+      patientCase.images?.endoscopyImages || [],
+      patientCase.images?.clinicalImages || [],
+      authorizedUids
+    );
+  }
 
-  await db.cases.update(patientCase.id, { syncedToCloud: true });
+  if (isTrashed && account.role === 'guest') {
+    // Guest cannot view trash; clean local trashed copy after cloud confirmation
+    await db.cases.delete(patientCase.id);
+  } else {
+    await db.cases.update(patientCase.id, { syncedToCloud: true });
+  }
   await db.deletedCases.delete(patientCase.id);
   return true;
 }
 
-export async function softDeleteCaseOnCloud(
-  user: User,
-  caseId: string,
-  workspace: SharedWorkspace | null = null
+export async function moveCaseToTrash(
+  account: AppAccount | null,
+  caseId: string
 ): Promise<void> {
-  if (!navigator.onLine) return;
+  const existingLocal = await db.cases.get(caseId);
+  const now = Date.now();
+  const actorLabel = account
+    ? `${account.displayName} (${account.username})`
+    : 'Người dùng ngoại tuyến';
 
-  const userEmail = normalizeEmail(user.email);
+  if (existingLocal) {
+    await db.cases.update(caseId, {
+      isTrashed: true,
+      trashedAt: now,
+      trashedBy: actorLabel,
+      lastEditedBy: actorLabel,
+      updatedAt: now,
+      syncedToCloud: false,
+    });
+  }
+
+  if (!account || !navigator.onLine) return;
+
   const safeCaseId = sanitizeId(caseId);
-  const casePath = workspace
-    ? `workspaces/${workspace.id}/cases/${safeCaseId}`
-    : `users/${user.uid}/cases/${safeCaseId}`;
-  const caseRef = workspace
-    ? doc(firestoreDb, 'workspaces', workspace.id, 'cases', safeCaseId)
-    : doc(firestoreDb, 'users', user.uid, 'cases', safeCaseId);
+  const casePath = `clinicCases/${safeCaseId}`;
+  const caseRef = doc(firestoreDb, 'clinicCases', safeCaseId);
 
   try {
     const snap = await getDoc(caseRef);
     if (snap.exists()) {
       await updateDoc(caseRef, {
-        deleted: true,
-        clientUpdatedAt: Date.now(),
+        lastEditedBy: clampStr(actorLabel, 160, account.username),
+        isTrashed: true,
+        trashedAt: now,
+        trashedBy: clampStr(actorLabel, 160, account.username),
+        clientUpdatedAt: now,
         updatedAt: serverTimestamp(),
-        ...(workspace ? { lastEditedByEmail: userEmail } : {}),
       });
+    }
+
+    if (account.role === 'guest') {
+      await db.cases.delete(caseId);
+    } else if (existingLocal) {
+      await db.cases.update(caseId, { syncedToCloud: true });
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, casePath);
+  }
+}
+
+export async function restoreCaseFromTrash(
+  adminAccount: AppAccount,
+  caseId: string
+): Promise<void> {
+  if (adminAccount.role !== 'admin') {
+    throw new Error('Chỉ Admin mới có quyền hoàn tác ca bệnh từ Thùng rác.');
+  }
+  const now = Date.now();
+  const actorLabel = `${adminAccount.displayName} (${adminAccount.username})`;
+  const existingLocal = await db.cases.get(caseId);
+
+  if (existingLocal) {
+    await db.cases.update(caseId, {
+      isTrashed: false,
+      trashedAt: undefined,
+      trashedBy: undefined,
+      lastEditedBy: actorLabel,
+      updatedAt: now,
+      syncedToCloud: false,
+    });
+  }
+
+  if (!navigator.onLine) return;
+
+  const safeCaseId = sanitizeId(caseId);
+  const casePath = `clinicCases/${safeCaseId}`;
+  const caseRef = doc(firestoreDb, 'clinicCases', safeCaseId);
+
+  try {
+    const snap = await getDoc(caseRef);
+    if (snap.exists()) {
+      await updateDoc(caseRef, {
+        lastEditedBy: clampStr(actorLabel, 160, adminAccount.username),
+        isTrashed: false,
+        trashedAt: null,
+        trashedBy: null,
+        clientUpdatedAt: now,
+        updatedAt: serverTimestamp(),
+      });
+    }
+    if (existingLocal) {
+      await db.cases.update(caseId, { syncedToCloud: true });
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, casePath);
+  }
+}
+
+export async function permanentlyDeleteCase(
+  adminAccount: AppAccount | null,
+  caseId: string
+): Promise<void> {
+  if (adminAccount && adminAccount.role !== 'admin') {
+    throw new Error('Chỉ Admin mới có quyền xóa vĩnh viễn ca bệnh.');
+  }
+
+  const now = Date.now();
+  await db.cases.delete(caseId);
+  await db.deletedCases.put({ id: caseId, deletedAt: now });
+
+  if (!adminAccount || !navigator.onLine) return;
+
+  const safeCaseId = sanitizeId(caseId);
+  const casePath = `clinicCases/${safeCaseId}`;
+  const caseRef = doc(firestoreDb, 'clinicCases', safeCaseId);
+  const actorLabel = clampStr(
+    `${adminAccount.displayName} (${adminAccount.username})`,
+    160,
+    adminAccount.username
+  );
+
+  try {
+    const snap = await getDoc(caseRef);
+    if (snap.exists()) {
+      await updateDoc(caseRef, {
+        lastEditedBy: actorLabel,
+        isTrashed: true,
+        trashedAt: snap.data().trashedAt || now,
+        trashedBy: snap.data().trashedBy || actorLabel,
+        deleted: true,
+        clientUpdatedAt: now,
+        updatedAt: serverTimestamp(),
+      });
+
+      const imgsCol = collection(firestoreDb, 'clinicCases', safeCaseId, 'images');
+      const imgSnap = await getDocs(query(imgsCol, where('adminUid', '==', adminAccount.uid)));
+      for (const imgDoc of imgSnap.docs) {
+        await updateDoc(imgDoc.ref, {
+          deleted: true,
+          dataUrl: '',
+          updatedAt: serverTimestamp(),
+        });
+      }
     }
     await db.deletedCases.delete(caseId);
   } catch (error) {
@@ -701,24 +897,27 @@ export async function softDeleteCaseOnCloud(
   }
 }
 
-export async function syncAllPendingToCloud(
-  user: User,
-  workspace: SharedWorkspace | null = null
-): Promise<number> {
+export async function syncAllPendingToCloud(account: AppAccount): Promise<number> {
   if (!navigator.onLine) return 0;
 
   let syncedCount = 0;
+  const authorizedUids = await getActiveAuthorizedUids(account);
 
-  const pendingDeletes = await db.deletedCases.toArray();
-  for (const del of pendingDeletes) {
-    await softDeleteCaseOnCloud(user, del.id, workspace);
-    syncedCount++;
+  if (account.role === 'admin') {
+    const pendingDeletes = await db.deletedCases.toArray();
+    for (const del of pendingDeletes) {
+      await permanentlyDeleteCase(account, del.id);
+      syncedCount++;
+    }
+  } else {
+    // Guests cannot permanently delete; clear any stale local hard-delete tombstones
+    await db.deletedCases.clear();
   }
 
   const allLocal = await db.cases.toArray();
   for (const c of allLocal) {
     if (!c.syncedToCloud) {
-      await pushCaseToCloud(user, c, workspace);
+      await pushCaseToCloud(account, c, authorizedUids);
       syncedCount++;
     }
   }
@@ -727,40 +926,47 @@ export async function syncAllPendingToCloud(
 }
 
 async function fetchRemoteCaseImages(
-  user: User,
-  caseId: string,
-  workspace: SharedWorkspace | null
-): Promise<{ ctScanImages: ClinicalImage[]; endoscopyImages: ClinicalImage[] }> {
-  const userEmail = normalizeEmail(user.email);
-  const imagesPath = workspace
-    ? `workspaces/${workspace.id}/cases/${caseId}/images`
-    : `users/${user.uid}/cases/${caseId}/images`;
-  const imagesRef = workspace
-    ? collection(firestoreDb, 'workspaces', workspace.id, 'cases', caseId, 'images')
-    : collection(firestoreDb, 'users', user.uid, 'cases', caseId, 'images');
+  account: AppAccount,
+  caseId: string
+): Promise<{
+  ctScanImages: ClinicalImage[];
+  endoscopyImages: ClinicalImage[];
+  clinicalImages: ClinicalImage[];
+}> {
+  const imagesPath = `clinicCases/${caseId}/images`;
+  const imagesRef = collection(firestoreDb, 'clinicCases', caseId, 'images');
 
   const ctScanImages: ClinicalImage[] = [];
   const endoscopyImages: ClinicalImage[] = [];
+  const clinicalImages: ClinicalImage[] = [];
 
   try {
-    const q = workspace
-      ? query(imagesRef, where('memberEmails', 'array-contains', userEmail))
-      : query(imagesRef, where('ownerId', '==', user.uid));
+    const q =
+      account.role === 'admin'
+        ? query(imagesRef, where('adminUid', '==', account.uid))
+        : query(imagesRef, where('authorizedUids', 'array-contains', account.uid));
     const snap = await getDocs(q);
     snap.forEach((docSnap) => {
       const data = docSnap.data();
       if (data.deleted) return;
+      const imgType: ClinicalImage['type'] =
+        data.type === 'ENDOSCOPY' || data.type === 'CLINICAL_PHOTO' ? data.type : 'CT_SCAN';
+      const imgTiming: ClinicalImage['timing'] =
+        data.timing === 'DISCHARGE' || data.timing === 'POST_OP' ? data.timing : 'PRE_OP';
+
       const img: ClinicalImage = {
         id: data.id || docSnap.id,
         dataUrl: data.dataUrl || '',
         title: data.title || '',
         uploadedAt: typeof data.uploadedAt === 'number' ? data.uploadedAt : Date.now(),
-        type: data.type === 'ENDOSCOPY' ? 'ENDOSCOPY' : 'CT_SCAN',
-        timing: data.timing === 'POST_OP' ? 'POST_OP' : 'PRE_OP',
+        type: imgType,
+        timing: imgTiming,
         notes: data.notes || '',
       };
       if (img.type === 'ENDOSCOPY') {
         endoscopyImages.push(img);
+      } else if (img.type === 'CLINICAL_PHOTO') {
+        clinicalImages.push(img);
       } else {
         ctScanImages.push(img);
       }
@@ -771,12 +977,17 @@ async function fetchRemoteCaseImages(
 
   ctScanImages.sort((a, b) => a.uploadedAt - b.uploadedAt);
   endoscopyImages.sort((a, b) => a.uploadedAt - b.uploadedAt);
-  return { ctScanImages, endoscopyImages };
+  clinicalImages.sort((a, b) => a.uploadedAt - b.uploadedAt);
+  return { ctScanImages, endoscopyImages, clinicalImages };
 }
 
 function reconstructPatientCase(
   remoteData: Record<string, any>,
-  images: { ctScanImages: ClinicalImage[]; endoscopyImages: ClinicalImage[] }
+  images: {
+    ctScanImages: ClinicalImage[];
+    endoscopyImages: ClinicalImage[];
+    clinicalImages: ClinicalImage[];
+  }
 ): PatientCase {
   const payload = remoteData.casePayload || {};
   return {
@@ -786,6 +997,10 @@ function reconstructPatientCase(
     createdAt: remoteData.clientCreatedAt || Date.now(),
     updatedAt: remoteData.clientUpdatedAt || Date.now(),
     syncedToCloud: true,
+    isTrashed: remoteData.isTrashed === true,
+    trashedAt: typeof remoteData.trashedAt === 'number' ? remoteData.trashedAt : undefined,
+    trashedBy: typeof remoteData.trashedBy === 'string' ? remoteData.trashedBy : undefined,
+    lastEditedBy: typeof remoteData.lastEditedBy === 'string' ? remoteData.lastEditedBy : undefined,
 
     age: payload.age ?? null,
     gender: payload.gender || 'Nam',
@@ -822,22 +1037,22 @@ function reconstructPatientCase(
 }
 
 export function subscribeToCloudCases(
-  user: User,
-  workspace: SharedWorkspace | null,
+  account: AppAccount,
   onSyncUpdate: () => void,
   onSyncStateChange?: (syncing: boolean) => void
 ): Unsubscribe {
-  const userEmail = normalizeEmail(user.email);
-  const casesPath = workspace
-    ? `workspaces/${workspace.id}/cases`
-    : `users/${user.uid}/cases`;
-  const casesColRef = workspace
-    ? collection(firestoreDb, 'workspaces', workspace.id, 'cases')
-    : collection(firestoreDb, 'users', user.uid, 'cases');
+  const casesPath = 'clinicCases';
+  const casesColRef = collection(firestoreDb, 'clinicCases');
 
-  const q = workspace
-    ? query(casesColRef, where('memberEmails', 'array-contains', userEmail))
-    : query(casesColRef, where('ownerId', '==', user.uid));
+  const q =
+    account.role === 'admin'
+      ? query(casesColRef, where('adminUid', '==', account.uid))
+      : query(
+          casesColRef,
+          where('authorizedUids', 'array-contains', account.uid),
+          where('isTrashed', '==', false),
+          where('deleted', '==', false)
+        );
 
   return onSnapshot(
     q,
@@ -845,6 +1060,19 @@ export function subscribeToCloudCases(
       onSyncStateChange?.(true);
       try {
         let changed = false;
+        const activeUids =
+          account.role === 'admin' ? await getActiveAuthorizedUids(account) : undefined;
+
+        for (const change of snapshot.docChanges()) {
+          if (change.type === 'removed') {
+            const removedId = change.doc.id;
+            const localRemoved = await db.cases.get(removedId);
+            if (localRemoved) {
+              await db.cases.delete(removedId);
+              changed = true;
+            }
+          }
+        }
 
         for (const docSnap of snapshot.docs) {
           const remote = docSnap.data();
@@ -866,22 +1094,46 @@ export function subscribeToCloudCases(
             continue;
           }
 
-          if (localDeleted && localDeleted.deletedAt > remoteUpdatedAt) {
-            await softDeleteCaseOnCloud(user, caseId, workspace);
+          if (account.role === 'admin' && localDeleted && localDeleted.deletedAt > remoteUpdatedAt) {
+            await permanentlyDeleteCase(account, caseId);
             continue;
           }
 
           if (!local || remoteUpdatedAt > local.updatedAt) {
-            const images = await fetchRemoteCaseImages(user, caseId, workspace);
+            const images = await fetchRemoteCaseImages(account, caseId);
             const reconstructed = reconstructPatientCase(remote, images);
             await db.cases.put(reconstructed);
             changed = true;
           } else if (local.updatedAt > remoteUpdatedAt && !local.syncedToCloud) {
-            await pushCaseToCloud(user, local, workspace);
+            await pushCaseToCloud(account, local, activeUids);
             changed = true;
           } else if (!local.syncedToCloud && local.updatedAt === remoteUpdatedAt) {
-            await db.cases.update(caseId, { syncedToCloud: true });
+            if (local.isTrashed && account.role === 'guest') {
+              await db.cases.delete(caseId);
+            } else {
+              await db.cases.update(caseId, { syncedToCloud: true });
+            }
             changed = true;
+          }
+        }
+
+        if (account.role === 'admin' && activeUids) {
+          for (const docSnap of snapshot.docs) {
+            const remote = docSnap.data();
+            if (remote.deleted === true) continue;
+            const existingUids: string[] = Array.isArray(remote.authorizedUids)
+              ? remote.authorizedUids
+              : [];
+            const mismatch =
+              existingUids.length !== activeUids.length ||
+              activeUids.some((u) => !existingUids.includes(u)) ||
+              existingUids.some((u) => !activeUids.includes(u));
+            if (mismatch) {
+              await updateDoc(docSnap.ref, {
+                authorizedUids: activeUids.slice(0, 50),
+                updatedAt: serverTimestamp(),
+              });
+            }
           }
         }
 
@@ -895,6 +1147,38 @@ export function subscribeToCloudCases(
     (error) => {
       onSyncStateChange?.(false);
       handleFirestoreError(error, OperationType.LIST, casesPath);
+    }
+  );
+}
+
+export function subscribeToManagedAccounts(
+  adminUid: string,
+  onUpdated: (accounts: AppAccount[]) => void
+): Unsubscribe {
+  const q = query(collection(firestoreDb, 'accounts'), where('adminUid', '==', adminUid));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list: AppAccount[] = [];
+      snapshot.forEach((d) => {
+        const data = d.data();
+        list.push({
+          uid: data.uid || d.id,
+          username: data.username || data.email || d.id,
+          email: data.email || '',
+          displayName: data.displayName || data.username || 'Khách',
+          role: data.role === 'admin' ? 'admin' : 'guest',
+          adminUid: data.adminUid || adminUid,
+          active: data.active === true,
+        });
+      });
+      list.sort((a, b) =>
+        a.role === 'admin' ? -1 : b.role === 'admin' ? 1 : a.username.localeCompare(b.username)
+      );
+      onUpdated(list);
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'accounts');
     }
   );
 }

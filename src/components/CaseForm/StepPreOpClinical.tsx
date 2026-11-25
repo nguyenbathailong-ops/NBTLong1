@@ -252,8 +252,11 @@ export const StepPreOpClinical: React.FC<StepPreOpClinicalProps> = ({ data, onCh
             {renderYesNoToggle('Mất hoặc giảm thị lực', data.eyeSymptoms.visualLossOrDecrease, (v) =>
               onChange({ eyeSymptoms: { ...data.eyeSymptoms, visualLossOrDecrease: v } })
             )}
-            {renderYesNoToggle('Rối loạn vận nhãn (nhìn đôi)', data.eyeSymptoms.ocularMobilityDisorder, (v) =>
+            {renderYesNoToggle('Rối loạn vận nhãn', data.eyeSymptoms.ocularMobilityDisorder, (v) =>
               onChange({ eyeSymptoms: { ...data.eyeSymptoms, ocularMobilityDisorder: v } })
+            )}
+            {renderYesNoToggle('Nhìn đôi', data.eyeSymptoms.diplopia || 'Không', (v) =>
+              onChange({ eyeSymptoms: { ...data.eyeSymptoms, diplopia: v } })
             )}
           </div>
         </div>

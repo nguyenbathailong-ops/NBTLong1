@@ -1,14 +1,68 @@
 {
   "entities": {
-    "UserProfile": {
-      "title": "UserProfile",
-      "description": "Authenticated clinician workspace profile stored privately per user.",
+    "AppBootstrap": {
+      "title": "AppBootstrap",
+      "description": "Singleton initialization lock storing only non-PII admin bootstrap status and primary admin UID.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": ["bootstrap"]
+        },
+        "initialized": {
+          "type": "boolean"
+        },
+        "adminUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "initialized", "adminUid", "createdAt", "updatedAt"]
+    },
+    "AdminMarker": {
+      "title": "AdminMarker",
+      "description": "Authoritative marker document proving a UID holds Admin privileges.",
       "type": "object",
       "properties": {
         "uid": {
           "type": "string",
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "createdAt", "updatedAt"]
+    },
+    "AppAccount": {
+      "title": "AppAccount",
+      "description": "Self-created Admin or Guest account profile managed by the clinic Admin.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "username": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 160
         },
         "email": {
           "type": "string",
@@ -17,251 +71,14 @@
         },
         "displayName": {
           "type": "string",
+          "minLength": 1,
           "maxLength": 160
         },
-        "photoURL": {
+        "role": {
           "type": "string",
-          "maxLength": 1000
+          "enum": ["admin", "guest"]
         },
-        "activeWorkspaceId": {
-          "type": "string",
-          "maxLength": 128
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time"
-        }
-      },
-      "required": ["uid", "email", "displayName", "createdAt", "updatedAt"]
-    },
-    "ClinicalCase": {
-      "title": "ClinicalCase",
-      "description": "Structured rhinology surgical and clinical research record synced across devices.",
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "ownerId": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "caseCode": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 64
-        },
-        "surgeryDate": {
-          "type": "string",
-          "maxLength": 20,
-          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
-        },
-        "primaryDiagnosis": {
-          "type": "string",
-          "maxLength": 500
-        },
-        "surgeryType": {
-          "type": "string",
-          "maxLength": 300
-        },
-        "complexityGrade": {
-          "type": "string",
-          "maxLength": 120
-        },
-        "totalLundMackayScore": {
-          "type": "number"
-        },
-        "clientCreatedAt": {
-          "type": "number"
-        },
-        "clientUpdatedAt": {
-          "type": "number"
-        },
-        "deleted": {
-          "type": "boolean"
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "casePayload": {
-          "type": "object",
-          "description": "Structured clinical variables covering epidemiology, symptoms, vitals, labs, Lund-Mackay, and treatment."
-        }
-      },
-      "required": [
-        "id",
-        "ownerId",
-        "caseCode",
-        "surgeryDate",
-        "primaryDiagnosis",
-        "surgeryType",
-        "complexityGrade",
-        "totalLundMackayScore",
-        "clientCreatedAt",
-        "clientUpdatedAt",
-        "deleted",
-        "createdAt",
-        "updatedAt",
-        "casePayload"
-      ]
-    },
-    "CaseImage": {
-      "title": "CaseImage",
-      "description": "Compressed CT Scan or Endoscopy image document belonging to a specific clinical case.",
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "ownerId": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "caseId": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "type": {
-          "type": "string",
-          "enum": ["CT_SCAN", "ENDOSCOPY"]
-        },
-        "timing": {
-          "type": "string",
-          "enum": ["PRE_OP", "POST_OP"]
-        },
-        "title": {
-          "type": "string",
-          "maxLength": 200
-        },
-        "notes": {
-          "type": "string",
-          "maxLength": 1000
-        },
-        "dataUrl": {
-          "type": "string",
-          "maxLength": 750000
-        },
-        "uploadedAt": {
-          "type": "number"
-        },
-        "deleted": {
-          "type": "boolean"
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time"
-        }
-      },
-      "required": [
-        "id",
-        "ownerId",
-        "caseId",
-        "type",
-        "timing",
-        "title",
-        "notes",
-        "dataUrl",
-        "uploadedAt",
-        "deleted",
-        "createdAt",
-        "updatedAt"
-      ]
-    },
-    "SharedWorkspace": {
-      "title": "SharedWorkspace",
-      "description": "Multi-account shared clinical workspace allowing multiple Google accounts to sync the same cases.",
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 120
-        },
-        "ownerId": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "inviteCode": {
-          "type": "string",
-          "minLength": 4,
-          "maxLength": 32,
-          "pattern": "^[A-Z0-9\\-]+$"
-        },
-        "memberUids": {
-          "type": "array",
-          "description": "Bounded list (max 20) of authorized member UIDs."
-        },
-        "memberEmails": {
-          "type": "array",
-          "description": "Bounded list (max 20) of authorized lowercase Google emails."
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time"
-        }
-      },
-      "required": [
-        "id",
-        "name",
-        "ownerId",
-        "inviteCode",
-        "memberUids",
-        "memberEmails",
-        "createdAt",
-        "updatedAt"
-      ]
-    },
-    "WorkspaceInvite": {
-      "title": "WorkspaceInvite",
-      "description": "Lookup token mapping an invite code to a shared workspace ID without exposing workspace listings.",
-      "type": "object",
-      "properties": {
-        "inviteCode": {
-          "type": "string",
-          "minLength": 4,
-          "maxLength": 32,
-          "pattern": "^[A-Z0-9\\-]+$"
-        },
-        "workspaceId": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
-        },
-        "workspaceName": {
-          "type": "string",
-          "maxLength": 120
-        },
-        "ownerId": {
+        "adminUid": {
           "type": "string",
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
@@ -279,18 +96,20 @@
         }
       },
       "required": [
-        "inviteCode",
-        "workspaceId",
-        "workspaceName",
-        "ownerId",
+        "uid",
+        "username",
+        "email",
+        "displayName",
+        "role",
+        "adminUid",
         "active",
         "createdAt",
         "updatedAt"
       ]
     },
-    "WorkspaceClinicalCase": {
-      "title": "WorkspaceClinicalCase",
-      "description": "Shared clinical case document inside a multi-account workspace.",
+    "ClinicCase": {
+      "title": "ClinicCase",
+      "description": "Shared clinical rhinology case record with Admin Trash & Restore lifecycle.",
       "type": "object",
       "properties": {
         "id": {
@@ -298,7 +117,7 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
-        "workspaceId": {
+        "adminUid": {
           "type": "string",
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
@@ -308,17 +127,26 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
-        "lastEditedByEmail": {
+        "lastEditedBy": {
           "type": "string",
-          "maxLength": 320
+          "maxLength": 160
         },
-        "memberUids": {
+        "authorizedUids": {
           "type": "array",
-          "description": "Bounded list (max 20) of authorized member UIDs."
+          "description": "Bounded list (max 50) containing adminUid and active guest UIDs."
         },
-        "memberEmails": {
-          "type": "array",
-          "description": "Bounded list (max 20) of authorized member emails."
+        "isTrashed": {
+          "type": "boolean"
+        },
+        "trashedAt": {
+          "type": ["number", "null"]
+        },
+        "trashedBy": {
+          "type": ["string", "null"],
+          "maxLength": 160
+        },
+        "deleted": {
+          "type": "boolean"
         },
         "caseCode": {
           "type": "string",
@@ -351,9 +179,6 @@
         "clientUpdatedAt": {
           "type": "number"
         },
-        "deleted": {
-          "type": "boolean"
-        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -363,16 +188,20 @@
           "format": "date-time"
         },
         "casePayload": {
-          "type": "object"
+          "type": "object",
+          "description": "Structured clinical variables covering epidemiology, symptoms, vitals, labs, Lund-Mackay, and treatment."
         }
       },
       "required": [
         "id",
-        "workspaceId",
+        "adminUid",
         "ownerId",
-        "lastEditedByEmail",
-        "memberUids",
-        "memberEmails",
+        "lastEditedBy",
+        "authorizedUids",
+        "isTrashed",
+        "trashedAt",
+        "trashedBy",
+        "deleted",
         "caseCode",
         "surgeryDate",
         "primaryDiagnosis",
@@ -381,15 +210,14 @@
         "totalLundMackayScore",
         "clientCreatedAt",
         "clientUpdatedAt",
-        "deleted",
         "createdAt",
         "updatedAt",
         "casePayload"
       ]
     },
-    "WorkspaceCaseImage": {
-      "title": "WorkspaceCaseImage",
-      "description": "Compressed CT Scan or Endoscopy image document belonging to a shared workspace case.",
+    "ClinicCaseImage": {
+      "title": "ClinicCaseImage",
+      "description": "Compressed CT Scan, Endoscopy, or Clinical Photo document belonging to a ClinicCase (Pre-op or Discharge).",
       "type": "object",
       "properties": {
         "id": {
@@ -397,7 +225,7 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
-        "workspaceId": {
+        "adminUid": {
           "type": "string",
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
@@ -412,21 +240,17 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
-        "memberUids": {
+        "authorizedUids": {
           "type": "array",
-          "description": "Bounded list (max 20) of authorized member UIDs."
-        },
-        "memberEmails": {
-          "type": "array",
-          "description": "Bounded list (max 20) of authorized member emails."
+          "description": "Bounded list (max 50) containing adminUid and active guest UIDs."
         },
         "type": {
           "type": "string",
-          "enum": ["CT_SCAN", "ENDOSCOPY"]
+          "enum": ["CT_SCAN", "ENDOSCOPY", "CLINICAL_PHOTO"]
         },
         "timing": {
           "type": "string",
-          "enum": ["PRE_OP", "POST_OP"]
+          "enum": ["PRE_OP", "POST_OP", "DISCHARGE"]
         },
         "title": {
           "type": "string",
@@ -457,11 +281,10 @@
       },
       "required": [
         "id",
-        "workspaceId",
+        "adminUid",
         "ownerId",
         "caseId",
-        "memberUids",
-        "memberEmails",
+        "authorizedUids",
         "type",
         "timing",
         "title",
@@ -475,33 +298,25 @@
     }
   },
   "firestore": {
-    "/users/{userId}": {
-      "schema": { "$ref": "#/entities/UserProfile" },
-      "description": "Private clinician profile document containing PII and activeWorkspaceId preference."
+    "/appMeta/bootstrap": {
+      "schema": { "$ref": "#/entities/AppBootstrap" },
+      "description": "Singleton lock indicating whether the initial Admin account has been claimed."
     },
-    "/users/{userId}/cases/{caseId}": {
-      "schema": { "$ref": "#/entities/ClinicalCase" },
-      "description": "Personal clinical case records owned by the authenticated clinician."
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminMarker" },
+      "description": "Trusted database record verifying Admin privileges for the specified UID."
     },
-    "/users/{userId}/cases/{caseId}/images/{imageId}": {
-      "schema": { "$ref": "#/entities/CaseImage" },
-      "description": "Clinical CT scan and endoscopy images scoped under each personal case."
+    "/accounts/{userId}": {
+      "schema": { "$ref": "#/entities/AppAccount" },
+      "description": "Self-created Admin and Guest accounts with active/disabled flag and role."
     },
-    "/workspaces/{workspaceId}": {
-      "schema": { "$ref": "#/entities/SharedWorkspace" },
-      "description": "Shared multi-account workspace configuration and bounded collaborator lists."
+    "/clinicCases/{caseId}": {
+      "schema": { "$ref": "#/entities/ClinicCase" },
+      "description": "Shared clinic cases accessible to Admin (active + trash) and active Guests (active only)."
     },
-    "/workspaceInvites/{inviteCode}": {
-      "schema": { "$ref": "#/entities/WorkspaceInvite" },
-      "description": "Invite code lookup records enabling verified users to join a shared workspace."
-    },
-    "/workspaces/{workspaceId}/cases/{caseId}": {
-      "schema": { "$ref": "#/entities/WorkspaceClinicalCase" },
-      "description": "Shared clinical cases synchronized across all authorized accounts in the workspace."
-    },
-    "/workspaces/{workspaceId}/cases/{caseId}/images/{imageId}": {
-      "schema": { "$ref": "#/entities/WorkspaceCaseImage" },
-      "description": "Shared clinical CT scan and endoscopy images scoped under each workspace case."
+    "/clinicCases/{caseId}/images/{imageId}": {
+      "schema": { "$ref": "#/entities/ClinicCaseImage" },
+      "description": "Clinical CT scan and endoscopy images scoped under each ClinicCase."
     }
   }
 }

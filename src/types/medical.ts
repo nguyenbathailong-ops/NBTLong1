@@ -25,7 +25,7 @@ export type CultureResult = 'Không mọc' | 'Tụ cầu vàng (S. aureus)' | 'P
 
 export type PathologyResult = 'Mô viêm mãn tính' | 'Nhiễm nấm xâm lấn' | 'Polyp mũi xoang lành tính' | 'U nhú đảo ngược' | 'Khác';
 
-export type TreatmentOutcome = 'Không thay đổi' | 'Cải thiện' | 'Nặng thêm';
+export type TreatmentOutcome = 'Hồi phục hoàn toàn' | 'Còn di chứng sau điều trị' | 'Tử vong';
 
 // Lund-Mackay CT anatomy
 export interface LundMackayScore {
@@ -43,6 +43,18 @@ export interface LundMackayScore {
   omcL: number; // 0 or 2
 }
 
+export type AccountRole = 'admin' | 'guest';
+
+export interface AppAccount {
+  uid: string;
+  username: string;
+  email: string;
+  displayName: string;
+  role: AccountRole;
+  adminUid: string;
+  active: boolean;
+}
+
 // Medical Case record covering all 5 research variable tables
 export interface PatientCase {
   id: string; // Internal UUID
@@ -51,6 +63,10 @@ export interface PatientCase {
   createdAt: number;
   updatedAt: number;
   syncedToCloud?: boolean;
+  isTrashed?: boolean;
+  trashedAt?: number;
+  trashedBy?: string;
+  lastEditedBy?: string;
 
   // Bảng 1: Đặc điểm dịch tễ
   age: number | null; // Tuổi (Định lượng: Năm)
@@ -97,6 +113,7 @@ export interface PatientCase {
     proptosis: YesNo; // Lồi mắt
     visualLossOrDecrease: YesNo; // Mất/giảm thị lực
     ocularMobilityDisorder: YesNo; // Rối loạn vận nhãn
+    diplopia?: YesNo; // Nhìn đôi
   };
 
   neurologicalSymptoms: {
@@ -153,7 +170,8 @@ export interface PatientCase {
 
   // Bảng 5: Đặc điểm điều trị & Tiên lượng
   treatmentFeatures: {
-    antibiotics: string; // Loại kháng sinh hoặc kháng nấm
+    antibiotics: string; // Loại kháng sinh
+    antifungals?: string[]; // Thuốc kháng nấm
     surgeryPerformed: YesNo; // Phẫu thuật: Có / Không
     surgeryCount: number | null; // Số lần phẫu thuật
     intraoperativeFindings: {
@@ -167,13 +185,15 @@ export interface PatientCase {
     treatmentDays: number | null; // Số ngày điều trị
     treatmentOutcome: TreatmentOutcome; // Không thay đổi, cải thiện, nặng thêm
     mortality: YesNo; // Tử vong: Có / Không
+    sequelae?: TreatmentSequelae; // Di chứng sau điều trị
     notes?: string;
   };
 
-  // Hình ảnh lâm sàng & CT
+  // Hình ảnh lâm sàng, CT & Nội soi (Trước mổ & Khi xuất viện)
   images: {
     ctScanImages: ClinicalImage[];
     endoscopyImages: ClinicalImage[];
+    clinicalImages?: ClinicalImage[];
   };
 
   // Metadata đối soát
@@ -187,13 +207,29 @@ export interface PatientCase {
   };
 }
 
+export interface TreatmentSequelae {
+  ptosis: YesNo; // Sụp mi
+  proptosis: YesNo; // Lồi mắt
+  visualLossOrDecrease: YesNo; // Mất/giảm thị lực
+  ocularMobilityDisorder: YesNo; // Rối loạn vận nhãn
+  diplopia: YesNo; // Nhìn đôi
+  focalNeurologicalDeficit: YesNo; // Dấu thần kinh định vị
+  seizures: YesNo; // Co giật
+  meningitis: YesNo; // Viêm màng não
+  brainAbscess: YesNo; // Áp xe não
+  csfLeak: YesNo; // Rò dịch não tủy
+  cerebralInfarction: YesNo; // Nhồi máu não
+  otherSequelae: YesNo; // Di chứng khác
+  otherSequelaeDetails?: string;
+}
+
 export interface ClinicalImage {
   id: string;
   dataUrl: string; // Base64 data
   title?: string;
   uploadedAt: number;
-  type: 'CT_SCAN' | 'ENDOSCOPY';
-  timing: 'PRE_OP' | 'POST_OP';
+  type: 'CT_SCAN' | 'ENDOSCOPY' | 'CLINICAL_PHOTO';
+  timing: 'PRE_OP' | 'POST_OP' | 'DISCHARGE';
   notes?: string;
 }
 

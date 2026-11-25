@@ -29,6 +29,7 @@ export function exportCasesToCsv(cases: PatientCase[]): void {
     'Lồi mắt',
     'Giảm thị lực',
     'Rối loạn vận nhãn',
+    'Nhìn đôi',
     'GCS',
     'Điểm GCS',
     'Mạch (l/p)',
@@ -58,9 +59,10 @@ export function exportCasesToCsv(cases: PatientCase[]): void {
     'Chi tiết cấy',
     'Giải phẫu bệnh',
     'Kháng sinh điều trị',
+    'Thuốc kháng nấm',
     'Phẫu thuật',
     'Số lần phẫu thuật',
-    'Thủ thuật thực hiện',
+    'Phương pháp phẫu thuật',
     'Nhầy mủ',
     'Phù nề',
     'Hoại tử',
@@ -68,8 +70,23 @@ export function exportCasesToCsv(cases: PatientCase[]): void {
     'Số ngày điều trị',
     'Kết quả điều trị',
     'Tử vong',
+    'Di chứng: Sụp mi',
+    'Di chứng: Lồi mắt',
+    'Di chứng: Mất/giảm thị lực',
+    'Di chứng: Rối loạn vận nhãn',
+    'Di chứng: Nhìn đôi',
+    'Di chứng: Dấu thần kinh định vị',
+    'Di chứng: Co giật',
+    'Di chứng: Viêm màng não',
+    'Di chứng: Áp xe não',
+    'Di chứng: Rò dịch não tủy',
+    'Di chứng: Nhồi máu não',
+    'Di chứng: Khác',
     'Số ảnh CT',
     'Số ảnh Nội soi',
+    'Số ảnh Lâm sàng',
+    'Số ảnh Trước mổ',
+    'Số ảnh Khi xuất viện',
     'Độ hoàn thiện (%)',
   ];
 
@@ -101,6 +118,7 @@ export function exportCasesToCsv(cases: PatientCase[]): void {
     `"${c.eyeSymptoms.proptosis}"`,
     `"${c.eyeSymptoms.visualLossOrDecrease}"`,
     `"${c.eyeSymptoms.ocularMobilityDisorder}"`,
+    `"${c.eyeSymptoms.diplopia || 'Không'}"`,
     `"${c.neurologicalSymptoms.gcsCategory}"`,
     c.neurologicalSymptoms.gcsScore ?? '',
     c.vitalSigns.pulse ?? '',
@@ -130,6 +148,7 @@ export function exportCasesToCsv(cases: PatientCase[]): void {
     `"${c.diseaseExtent.cultureBacteriaName || ''}"`,
     `"${c.diseaseExtent.pathologyResult}"`,
     `"${c.treatmentFeatures.antibiotics || ''}"`,
+    `"${c.treatmentFeatures.antifungals?.join('; ') || ''}"`,
     `"${c.treatmentFeatures.surgeryPerformed}"`,
     c.treatmentFeatures.surgeryCount ?? '',
     `"${c.treatmentFeatures.surgicalProcedures?.join('; ') || ''}"`,
@@ -140,8 +159,31 @@ export function exportCasesToCsv(cases: PatientCase[]): void {
     c.treatmentFeatures.treatmentDays ?? '',
     `"${c.treatmentFeatures.treatmentOutcome}"`,
     `"${c.treatmentFeatures.mortality}"`,
+    `"${c.treatmentFeatures.sequelae?.ptosis || 'Không'}"`,
+    `"${c.treatmentFeatures.sequelae?.proptosis || 'Không'}"`,
+    `"${c.treatmentFeatures.sequelae?.visualLossOrDecrease || 'Không'}"`,
+    `"${c.treatmentFeatures.sequelae?.ocularMobilityDisorder || 'Không'}"`,
+    `"${c.treatmentFeatures.sequelae?.diplopia || 'Không'}"`,
+    `"${c.treatmentFeatures.sequelae?.focalNeurologicalDeficit || 'Không'}"`,
+    `"${c.treatmentFeatures.sequelae?.seizures || 'Không'}"`,
+    `"${c.treatmentFeatures.sequelae?.meningitis || 'Không'}"`,
+    `"${c.treatmentFeatures.sequelae?.brainAbscess || 'Không'}"`,
+    `"${c.treatmentFeatures.sequelae?.csfLeak || 'Không'}"`,
+    `"${c.treatmentFeatures.sequelae?.cerebralInfarction || 'Không'}"`,
+    `"${c.treatmentFeatures.sequelae?.otherSequelae || 'Không'}"`,
     c.images?.ctScanImages?.length || 0,
     c.images?.endoscopyImages?.length || 0,
+    c.images?.clinicalImages?.length || 0,
+    [
+      ...(c.images?.ctScanImages || []),
+      ...(c.images?.endoscopyImages || []),
+      ...(c.images?.clinicalImages || []),
+    ].filter((img) => img.timing === 'PRE_OP').length,
+    [
+      ...(c.images?.ctScanImages || []),
+      ...(c.images?.endoscopyImages || []),
+      ...(c.images?.clinicalImages || []),
+    ].filter((img) => img.timing === 'DISCHARGE' || img.timing === 'POST_OP').length,
     c.auditStatus?.completionPercentage ?? 0,
   ]);
 
@@ -222,6 +264,8 @@ export function exportHtmlReport(cases: PatientCase[]): void {
     .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; }
     .badge-grade { background: #fef3c7; color: #92400e; }
     .badge-success { background: #dcfce7; color: #166534; }
+    .badge-warn { background: #fef3c7; color: #92400e; }
+    .badge-danger { background: #fee2e2; color: #991b1b; }
     .footer { margin-top: 30px; font-size: 12px; color: #94a3b8; text-align: right; border-top: 1px solid #e2e8f0; padding-top: 10px; }
   </style>
 </head>
@@ -260,7 +304,13 @@ export function exportHtmlReport(cases: PatientCase[]): void {
           <td><strong>${c.totalLundMackayScore}/24</strong></td>
           <td>${c.diseaseExtent.cultureResult} / ${c.diseaseExtent.pathologyResult}</td>
           <td>${c.treatmentFeatures.surgeryPerformed === 'Có' ? (c.treatmentFeatures.surgicalProcedures?.[0] || 'Phẫu thuật') : 'Nội khoa'}</td>
-          <td><span class="badge badge-success">${c.treatmentFeatures.treatmentOutcome}</span></td>
+          <td><span class="badge ${
+            c.treatmentFeatures.treatmentOutcome === 'Tử vong'
+              ? 'badge-danger'
+              : c.treatmentFeatures.treatmentOutcome === 'Còn di chứng sau điều trị'
+              ? 'badge-warn'
+              : 'badge-success'
+          }">${c.treatmentFeatures.treatmentOutcome}</span></td>
         </tr>
       `
         )

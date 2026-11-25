@@ -14,12 +14,17 @@ import {
   RefreshCw,
   LogIn,
   Users,
+  Shield,
+  User as UserIcon,
+  Trash2,
 } from 'lucide-react';
 
 interface DashboardProps {
   cases: PatientCase[];
+  trashedCount: number;
   onAddNewCase: () => void;
   onOpenAudit: () => void;
+  onOpenTrash: () => void;
   onOpenSafetyModal: () => void;
   onOpenGuide: () => void;
   onSelectCase: (c: PatientCase) => void;
@@ -27,20 +32,27 @@ interface DashboardProps {
 
 export const Dashboard: React.FC<DashboardProps> = ({
   cases,
+  trashedCount,
   onAddNewCase,
   onOpenAudit,
+  onOpenTrash,
   onOpenSafetyModal,
   onOpenGuide,
   onSelectCase,
 }) => {
-  const { user, workspace, isSyncing, signInWithGoogle, triggerManualSync } = useFirebaseSync();
+  const { account, isAdmin, managedAccounts, isSyncing, bootstrapState, triggerManualSync } =
+    useFirebaseSync();
 
   const eyeComplicationsCount = cases.filter(
     (c) => c.diseaseExtent.chandlerGroup !== 'Không lan ổ mắt (Nhóm 0)'
   ).length;
 
   const imagesCount = cases.filter(
-    (c) => (c.images?.ctScanImages?.length || 0) + (c.images?.endoscopyImages?.length || 0) > 0
+    (c) =>
+      (c.images?.ctScanImages?.length || 0) +
+        (c.images?.endoscopyImages?.length || 0) +
+        (c.images?.clinicalImages?.length || 0) >
+      0
   ).length;
 
   const auditedIssuesCount = cases.reduce((acc, curr) => {
@@ -48,10 +60,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
   }, 0);
 
   const syncedCount = cases.filter((c) => c.syncedToCloud).length;
+  const guestCount = managedAccounts.filter((a) => a.role === 'guest').length;
 
   return (
     <div className="space-y-6">
-      {/* Header section matching Image 2 */}
+      {/* Header section */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
         <div>
           <span className="text-[10px] font-mono uppercase tracking-wider text-teal-400 font-bold">
@@ -75,7 +88,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-300 transition cursor-pointer"
           >
             <ShieldCheck className="w-3.5 h-3.5 text-teal-400" />
-            <span>Đồng bộ & Sao lưu</span>
+            <span>{isAdmin ? 'Tài khoản & Sao lưu' : 'Đồng bộ & Sao lưu'}</span>
           </button>
 
           <button
@@ -98,12 +111,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
       </div>
 
-      {/* Multi-device Cloud Sync Banner */}
+      {/* Multi-device Cloud Sync & RBAC Banner */}
       <div className="rounded-2xl bg-gradient-to-r from-[#0c1b33] via-[#0b1528] to-[#0a1322] border border-teal-500/35 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-lg">
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 rounded-xl bg-teal-500/15 border border-teal-500/40 flex items-center justify-center shrink-0">
-            {workspace ? (
-              <Users className="w-5 h-5 text-cyan-400" />
+            {account ? (
+              isAdmin ? (
+                <Shield className="w-5 h-5 text-amber-400" />
+              ) : (
+                <UserIcon className="w-5 h-5 text-cyan-400" />
+              )
             ) : (
               <Cloud className="w-5 h-5 text-teal-400" />
             )}
@@ -111,53 +128,67 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <div className="space-y-1">
             <div className="flex items-center gap-2 flex-wrap">
               <h3 className="text-sm font-bold text-white">
-                {!user
-                  ? 'Đồng bộ ca bệnh giữa nhiều thiết bị & nhiều tài khoản'
-                  : workspace
-                  ? `Kho chung: ${workspace.name}`
-                  : 'Đang bật Đồng bộ Đám mây (Kho cá nhân)'}
+                {!account
+                  ? 'Đăng nhập tài khoản tự tạo để đồng bộ đa thiết bị'
+                  : isAdmin
+                  ? `Quản trị viên (Admin): ${account.displayName}`
+                  : `Tài khoản khách: ${account.displayName}`}
               </h3>
-              {user && (
+              {account && (
                 <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-700">
                   {syncedCount}/{cases.length} CA ĐÃ LÊN CLOUD
                 </span>
               )}
-              {workspace && (
+              {isAdmin && (
                 <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-950 text-cyan-300 border border-cyan-700">
-                  {workspace.memberEmails.length} TÀI KHOẢN · MÃ: {workspace.inviteCode}
+                  {guestCount} TÀI KHOẢN KHÁCH
                 </span>
               )}
             </div>
             <p className="text-xs text-slate-300 leading-relaxed">
-              {!user
-                ? 'Đăng nhập bằng Google để đồng bộ qua điện thoại, máy tính, Vercel hoặc liên kết nhiều tài khoản Google cùng chung 1 kho dữ liệu.'
-                : workspace
-                ? `Tài khoản ${user.email} đang đồng bộ chung với ${workspace.memberEmails.length} tài khoản (${workspace.memberEmails.join(', ')}).`
-                : `Tài khoản ${user.email} — bấm "Dùng chung nhiều TK" để tạo Kho chung hoặc nhập Mã nhóm đồng bộ với tài khoản khác.`}
+              {!account
+                ? bootstrapState === 'uninitialized'
+                  ? 'Bấm "Khởi tạo Admin" để tạo tài khoản quản trị đầu tiên (không dùng Google), sau đó tạo thêm các tài khoản khách cùng đồng bộ chung.'
+                  : 'Đăng nhập bằng tài khoản Admin hoặc tài khoản khách do Admin cấp để đồng bộ dữ liệu trên mọi thiết bị.'
+                : isAdmin
+                ? `Tài khoản "${account.username}" có toàn quyền tạo tài khoản khách, xóa vĩnh viễn ca bệnh và kiểm soát Thùng rác (${trashedCount} ca).`
+                : `Tài khoản "${account.username}" có quyền xem, thêm mới và chỉnh sửa ca bệnh. Ca bệnh khi xóa sẽ chuyển vào Thùng rác của Admin.`}
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
-          {!user ? (
+          {!account ? (
             <button
               type="button"
-              onClick={signInWithGoogle}
+              onClick={onOpenSafetyModal}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-teal-400 hover:bg-teal-300 text-slate-950 font-bold text-xs transition cursor-pointer shadow-md"
             >
               <LogIn className="w-3.5 h-3.5" />
-              <span>Đăng nhập Google</span>
+              <span>{bootstrapState === 'uninitialized' ? 'Khởi tạo Admin' : 'Đăng nhập'}</span>
             </button>
           ) : (
             <>
-              <button
-                type="button"
-                onClick={onOpenSafetyModal}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-300 font-semibold text-xs transition cursor-pointer"
-              >
-                <Users className="w-3.5 h-3.5" />
-                <span>{workspace ? 'Quản lý tài khoản' : 'Dùng chung nhiều TK'}</span>
-              </button>
+              {isAdmin && trashedCount > 0 && (
+                <button
+                  type="button"
+                  onClick={onOpenTrash}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-rose-950/70 hover:bg-rose-900 border border-rose-700 text-rose-200 font-semibold text-xs transition cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Thùng rác ({trashedCount})</span>
+                </button>
+              )}
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={onOpenSafetyModal}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-300 font-semibold text-xs transition cursor-pointer"
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>Tạo TK Khách</span>
+                </button>
+              )}
               <button
                 type="button"
                 disabled={isSyncing}
@@ -172,7 +203,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
       </div>
 
-      {/* Quick Start Card matching Image 2 */}
+      {/* Quick Start Card */}
       <div className="bg-[#0b1324] border border-slate-800/90 rounded-2xl p-6 sm:p-7 shadow-xl space-y-4">
         <div className="flex items-center gap-2">
           <span className="text-lg">👋</span>
@@ -216,9 +247,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
       </div>
 
-      {/* KPI Counters matching Image 2 */}
+      {/* KPI Counters */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Total Cases Counter matching Image 2 */}
         <div className="bg-[#0a1120] border border-slate-800 rounded-xl p-5 space-y-2">
           <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
             TỔNG SỐ CA ĐÃ GHI
@@ -227,11 +257,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
             {cases.length}
           </div>
           <p className="text-[11px] text-slate-500">
-            {user ? `${syncedCount}/${cases.length} ca đã đồng bộ Cloud` : 'Lưu ngoại tuyến trong IndexedDB'}
+            {account ? `${syncedCount}/${cases.length} ca đã đồng bộ Cloud` : 'Lưu ngoại tuyến trong IndexedDB'}
           </p>
         </div>
 
-        {/* Biến chứng mắt Chandler */}
         <div className="bg-[#0a1120] border border-slate-800 rounded-xl p-5 space-y-2">
           <span className="text-[11px] font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-1">
             <Eye className="w-3.5 h-3.5" /> BIẾN CHỨNG Ổ MẮT (CHANDLER)
@@ -244,10 +273,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </p>
         </div>
 
-        {/* Hình ảnh đính kèm */}
         <div className="bg-[#0a1120] border border-slate-800 rounded-xl p-5 space-y-2">
           <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1">
-            <Layers className="w-3.5 h-3.5" /> CÓ ẢNH CT / NỘI SOI
+            <Layers className="w-3.5 h-3.5" /> CÓ ẢNH LÂM SÀNG / CT / NỘI SOI
           </span>
           <div className="text-4xl font-extrabold font-mono text-indigo-400">
             {imagesCount}
@@ -255,7 +283,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <p className="text-[11px] text-slate-500">Hỗ trợ dán trực tiếp Ctrl+V & kéo thả</p>
         </div>
 
-        {/* Độ hoàn thiện dữ liệu */}
         <div className="bg-[#0a1120] border border-slate-800 rounded-xl p-5 space-y-2">
           <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
             <FileCheck2 className="w-3.5 h-3.5" /> ĐỘ SẴN SÀNG NGHIÊN CỨU
@@ -319,7 +346,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
       </div>
 
-      {/* Footer matching Image 2 */}
+      {/* Footer */}
       <div className="pt-8 pb-4 text-center text-xs text-slate-500 space-y-1">
         <p>
           Phát triển bởi <strong className="text-slate-400">BS. Trần Tấn Đăng Khoa</strong>

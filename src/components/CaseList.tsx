@@ -5,26 +5,22 @@ import {
   exportDeidentifiedCsv,
   exportHtmlReport,
 } from '../utils/exportTools';
+import { useFirebaseSync } from '../contexts/FirebaseContext';
 import {
   Search,
   Download,
-  Calendar,
-  Filter,
-  Eye,
-  Edit2,
   Trash2,
-  Plus,
-  FileSpreadsheet,
-  FileCode,
   Image as ImageIcon,
   Cloud,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface CaseListProps {
   cases: PatientCase[];
   onAddNew: () => void;
   onEdit: (caseItem: PatientCase) => void;
-  onDelete: (caseId: string) => void;
+  onMoveToTrash: (caseId: string) => Promise<void>;
+  onPermanentDelete: (caseId: string) => Promise<void>;
   onViewDetails: (caseItem: PatientCase) => void;
 }
 
@@ -32,14 +28,18 @@ export const CaseList: React.FC<CaseListProps> = ({
   cases,
   onAddNew,
   onEdit,
-  onDelete,
+  onMoveToTrash,
+  onPermanentDelete,
   onViewDetails,
 }) => {
+  const { isAdmin } = useFirebaseSync();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGrade, setSelectedGrade] = useState<string>('ALL');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [sortBy, setSortBy] = useState<'date_desc' | 'date_asc' | 'score_desc'>('date_desc');
+  const [pendingDeleteCase, setPendingDeleteCase] = useState<PatientCase | null>(null);
+  const [deleting, setDeleting] = useState<boolean>(false);
 
   // Filter logic
   const filteredCases = cases.filter((c) => {
@@ -235,6 +235,8 @@ export const CaseList: React.FC<CaseListProps> = ({
                   const pct = c.auditStatus?.completionPercentage ?? 50;
                   const ctCount = c.images?.ctScanImages?.length || 0;
                   const endoCount = c.images?.endoscopyImages?.length || 0;
+                  const clinCount = c.images?.clinicalImages?.length || 0;
+                  const totalImgCount = ctCount + endoCount + clinCount;
 
                   return (
                     <tr
@@ -298,10 +300,10 @@ export const CaseList: React.FC<CaseListProps> = ({
                       {/* Hình ảnh */}
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-1.5 text-[11px] font-mono">
-                          {ctCount + endoCount > 0 ? (
+                          {totalImgCount > 0 ? (
                             <span className="flex items-center gap-1 text-teal-300 bg-teal-950/60 px-2 py-0.5 rounded border border-teal-800">
                               <ImageIcon className="w-3 h-3" />
-                              {ctCount} CT · {endoCount} NS
+                              {ctCount} CT · {endoCount} NS{clinCount > 0 ? ` · ${clinCount} LS` : ''}
                             </span>
                           ) : (
                             <span className="text-slate-600">—</span>
@@ -313,8 +315,13 @@ export const CaseList: React.FC<CaseListProps> = ({
                       <td className="py-3 px-4">
                         <span
                           className={`px-2 py-0.5 rounded text-[10px] font-medium ${
-                            c.treatmentFeatures.treatmentOutcome === 'Cải thiện'
-                              ? 'bg-emerald-950 text-emerald-300'
+                            c.treatmentFeatures.treatmentOutcome === 'Tử vong'
+                              ? 'bg-rose-950 text-rose-300 border border-rose-800/60'
+                              : c.treatmentFeatures.treatmentOutcome === 'Còn di chứng sau điều trị'
+                              ? 'bg-amber-950 text-amber-300 border border-amber-800/60'
+                              : c.treatmentFeatures.treatmentOutcome === 'Hồi phục hoàn toàn' ||
+                                (c.treatmentFeatures.treatmentOutcome as string) === 'Cải thiện'
+                              ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/60'
                               : 'bg-slate-800 text-slate-400'
                           }`}
                         >
@@ -343,11 +350,7 @@ export const CaseList: React.FC<CaseListProps> = ({
 
                           <button
                             type="button"
-                            onClick={() => {
-                              if (confirm(`Bạn có chắc muốn xoá ca mổ ${c.caseCode}?`)) {
-                                onDelete(c.id);
-                              }
-                            }}
+                            onClick={() => setPendingDeleteCase(c)}
                             className="px-2.5 py-1 rounded bg-rose-950/40 hover:bg-rose-900 border border-rose-900 text-rose-300 text-xs font-medium transition cursor-pointer"
                           >
                             Xoá
@@ -362,6 +365,86 @@ export const CaseList: React.FC<CaseListProps> = ({
           </table>
         </div>
       </div>
+
+      {/* Role-aware Delete Confirmation Modal */}
+      {pendingDeleteCase && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-2xl bg-[#090f1d] border border-slate-700 p-6 space-y-4 shadow-2xl text-slate-100">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-full bg-rose-500/15 border border-rose-500/40 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-rose-400" />
+              </div>
+              <div>
+                <h3 className="font-serif font-bold text-base text-white">
+                  {isAdmin
+                    ? `Xử lý ca bệnh ${pendingDeleteCase.caseCode}`
+                    : `Chuyển ca ${pendingDeleteCase.caseCode} vào Thùng rác?`}
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  {pendingDeleteCase.primaryDiagnosis}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              {isAdmin
+                ? 'Với quyền Admin, bạn có thể chuyển ca này vào Thùng rác (có thể hoàn tác sau) hoặc xóa vĩnh viễn khỏi hệ thống.'
+                : 'Tài khoản khách không xóa vĩnh viễn dữ liệu. Ca bệnh này sẽ được chuyển vào Thùng rác để Admin xem xét hoàn tác hoặc xóa bỏ.'}
+            </p>
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setPendingDeleteCase(null)}
+                className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold cursor-pointer"
+              >
+                Hủy
+              </button>
+
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={async () => {
+                  const id = pendingDeleteCase.id;
+                  setDeleting(true);
+                  try {
+                    await onMoveToTrash(id);
+                    setPendingDeleteCase(null);
+                  } finally {
+                    setDeleting(false);
+                  }
+                }}
+                className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs cursor-pointer disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Chuyển vào Thùng rác
+              </button>
+
+              {isAdmin && (
+                <button
+                  type="button"
+                  disabled={deleting}
+                  onClick={async () => {
+                    const id = pendingDeleteCase.id;
+                    setDeleting(true);
+                    try {
+                      await onPermanentDelete(id);
+                      setPendingDeleteCase(null);
+                    } finally {
+                      setDeleting(false);
+                    }
+                  }}
+                  className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs cursor-pointer disabled:opacity-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Xóa vĩnh viễn
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -23,7 +23,7 @@ export const CaseWizard: React.FC<CaseWizardProps> = ({
   onSave,
   onCancel,
 }) => {
-  const { user, workspace } = useFirebaseSync();
+  const { account } = useFirebaseSync();
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [caseData, setCaseData] = useState<PatientCase>({ ...initialCase });
   const [showHelpModal, setShowHelpModal] = useState<boolean>(false);
@@ -58,7 +58,14 @@ export const CaseWizard: React.FC<CaseWizardProps> = ({
     if (caseData.totalLundMackayScore > 0 || caseData.diseaseExtent.chandlerGroup !== 'Không lan ổ mắt (Nhóm 0)') count++;
     if (caseData.treatmentFeatures.surgicalProcedures?.length > 0 || caseData.treatmentFeatures.antibiotics) count++;
     if (caseData.treatmentFeatures.treatmentDays !== null || caseData.treatmentFeatures.treatmentOutcome) count++;
-    if ((caseData.images?.ctScanImages?.length || 0) + (caseData.images?.endoscopyImages?.length || 0) > 0) count++;
+    if (
+      (caseData.images?.ctScanImages?.length || 0) +
+        (caseData.images?.endoscopyImages?.length || 0) +
+        (caseData.images?.clinicalImages?.length || 0) >
+      0
+    ) {
+      count++;
+    }
     return count;
   };
 
@@ -74,10 +81,15 @@ export const CaseWizard: React.FC<CaseWizardProps> = ({
   const handleSave = async () => {
     // Run audit before saving
     const audit = auditSingleCase(caseData);
+    const editorLabel = account
+      ? `${account.displayName} (${account.username})`
+      : caseData.lastEditedBy;
     const updatedCase: PatientCase = {
       ...caseData,
       updatedAt: Date.now(),
       syncedToCloud: false,
+      isTrashed: false,
+      lastEditedBy: editorLabel,
       auditStatus: {
         completionPercentage: audit.completionPercentage,
         hasInconsistencies: audit.inconsistencyCount > 0,
@@ -92,13 +104,11 @@ export const CaseWizard: React.FC<CaseWizardProps> = ({
     await db.cases.put(updatedCase);
 
     let msg = '✓ Đã lưu hồ sơ vào bộ nhớ thiết bị!';
-    if (user && navigator.onLine) {
-      await pushCaseToCloud(user, updatedCase, workspace);
+    if (account && navigator.onLine) {
+      await pushCaseToCloud(account, updatedCase);
       updatedCase.syncedToCloud = true;
-      msg = workspace
-        ? `✓ Đã lưu & đồng bộ lên Kho chung "${workspace.name}"!`
-        : '✓ Đã lưu hồ sơ và đồng bộ tự động lên Cloud!';
-    } else if (user) {
+      msg = '✓ Đã lưu hồ sơ và đồng bộ tự động lên Cloud!';
+    } else if (account) {
       msg = '✓ Đã lưu ngoại tuyến. Sẽ tự động đồng bộ lên Cloud khi có mạng!';
     }
 
@@ -252,13 +262,15 @@ export const CaseWizard: React.FC<CaseWizardProps> = ({
 
           {currentStep === 6 && (
             <StepImages
-              ctScanImages={caseData.images.ctScanImages}
-              endoscopyImages={caseData.images.endoscopyImages}
-              onUpdateImages={(ctImages, endoImages) =>
+              ctScanImages={caseData.images.ctScanImages || []}
+              endoscopyImages={caseData.images.endoscopyImages || []}
+              clinicalImages={caseData.images.clinicalImages || []}
+              onUpdateImages={(ctImages, endoImages, clinImages) =>
                 updateCase({
                   images: {
                     ctScanImages: ctImages,
                     endoscopyImages: endoImages,
+                    clinicalImages: clinImages,
                   },
                 })
               }

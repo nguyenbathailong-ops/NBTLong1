@@ -1,6 +1,6 @@
 import React from 'react';
 import { PatientCase, YesNo } from '../../types/medical';
-import { Syringe, Scissors, CheckSquare } from 'lucide-react';
+import { Syringe, Scissors, ShieldPlus } from 'lucide-react';
 
 interface StepIntraOpProps {
   data: PatientCase;
@@ -9,6 +9,9 @@ interface StepIntraOpProps {
 
 export const StepIntraOp: React.FC<StepIntraOpProps> = ({ data, onChange }) => {
   const quickProcedures = [
+    'Phẫu thuật nội soi',
+    'Phẫu thuật dẫn lưu áp xe đường ngoài',
+    'Phẫu thuật dẫn lưu áp xe kết hợp nội soi và đường ngoài',
     'FESS GIỚI HẠN (SÀNG TRƯỚC–HÀM)',
     'FESS TOÀN BỘ XOANG',
     'DRAF IIA (MỞ NGÁCH TRÁN)',
@@ -22,14 +25,21 @@ export const StepIntraOp: React.FC<StepIntraOpProps> = ({ data, onChange }) => {
     'GIẢI ÁP Ổ MẮT / GIẢI ÁP THẦN KINH THỊ',
   ];
 
-  const commonAntibiotics = [
-    'Vancomycin + Ceftriaxone',
-    'Augmentin 1.2g IV + Metronidazole',
+  const antibioticPresets = [
     'Meropenem + Vancomycin',
+    'Ceftazidime + Metronidazole + Ciprofloxacine',
+    'Ceftazidime + Vancomycin',
+    'Vancomycin + Ceftriaxone IV',
+    'Augmentin 1.2g IV + Metronidazole',
     'Ceftazidime + Amikacin',
-    'Amphotericin B (Kháng nấm)',
-    'Voriconazole (Kháng nấm)',
-    'Khác',
+  ];
+
+  const antifungalOptions = [
+    'Amphotericin B',
+    'Voriconazole',
+    'Posaconazole',
+    'Fluconazole',
+    'Itraconazole',
   ];
 
   const toggleProcedure = (proc: string) => {
@@ -45,21 +55,34 @@ export const StepIntraOp: React.FC<StepIntraOpProps> = ({ data, onChange }) => {
     });
   };
 
+  const toggleAntifungal = (drug: string) => {
+    const current = data.treatmentFeatures.antifungals || [];
+    const next = current.includes(drug)
+      ? current.filter((d) => d !== drug)
+      : [...current, drug];
+    onChange({
+      treatmentFeatures: {
+        ...data.treatmentFeatures,
+        antifungals: next,
+      },
+    });
+  };
+
   return (
     <div className="space-y-6">
-      {/* 1. Phân loại thủ thuật phẫu thuật (Giao diện giống Rhinolog) */}
+      {/* 1. Phương pháp phẫu thuật */}
       <div className="bg-[#0a1120] border border-slate-800 rounded-xl p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
-              PHÂN LOẠI CA
+              PHƯƠNG PHÁP PHẪU THUẬT
             </span>
             <span className="rounded bg-emerald-950/80 border border-emerald-800 px-2 py-0.5 text-[10px] font-mono font-medium text-emerald-300">
               CHỌN NHANH · NHIỀU LỰA CHỌN
             </span>
           </div>
           <span className="text-xs text-slate-400">
-            Chạm để chọn <strong>nhiều thủ thuật</strong> cùng lúc
+            Chạm để chọn <strong>nhiều phương pháp / thủ thuật</strong> cùng lúc
           </span>
         </div>
 
@@ -211,21 +234,52 @@ export const StepIntraOp: React.FC<StepIntraOpProps> = ({ data, onChange }) => {
         </div>
       </div>
 
-      {/* 3. Kháng sinh & Thuốc điều trị */}
+      {/* 3. Kháng sinh điều trị */}
       <div className="bg-[#0a1120] border border-slate-800 rounded-xl p-4 sm:p-5 space-y-3">
         <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
           <Syringe className="w-4 h-4 text-emerald-400" />
-          KHÁNG SINH / KHÁNG NẤM ĐIỀU TRỊ
+          KHÁNG SINH ĐIỀU TRỊ
         </h3>
+
+        <div className="space-y-2">
+          <span className="block text-[11px] font-medium text-slate-400">
+            Chọn nhanh phác đồ kháng sinh (hoặc tự nhập bên dưới):
+          </span>
+          <div className="flex flex-wrap gap-2">
+            {antibioticPresets.map((ab) => {
+              const isSelected = data.treatmentFeatures.antibiotics === ab;
+              return (
+                <button
+                  key={ab}
+                  type="button"
+                  onClick={() =>
+                    onChange({
+                      treatmentFeatures: {
+                        ...data.treatmentFeatures,
+                        antibiotics: isSelected ? '' : ab,
+                      },
+                    })
+                  }
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
+                    isSelected
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/70'
+                      : 'bg-slate-900/80 text-slate-300 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  {ab}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         <div>
           <label className="block text-xs font-medium text-slate-400 mb-1">
-            Loại kháng sinh hoặc kháng nấm sử dụng:
+            Phác đồ kháng sinh sử dụng (có thể chỉnh sửa/nhập thêm):
           </label>
           <input
             type="text"
-            list="antibiotics-list"
-            placeholder="Nhập hoặc chọn phác đồ (vd: Vancomycin + Ceftriaxone IV)..."
+            placeholder="Nhập hoặc chọn phác đồ (vd: Meropenem + Vancomycin)..."
             value={data.treatmentFeatures.antibiotics}
             onChange={(e) =>
               onChange({
@@ -237,11 +291,46 @@ export const StepIntraOp: React.FC<StepIntraOpProps> = ({ data, onChange }) => {
             }
             className="w-full bg-[#070b14] border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-emerald-400 font-mono"
           />
-          <datalist id="antibiotics-list">
-            {commonAntibiotics.map((ab) => (
-              <option key={ab} value={ab} />
-            ))}
-          </datalist>
+        </div>
+      </div>
+
+      {/* 4. Thuốc kháng nấm */}
+      <div className="bg-[#0a1120] border border-slate-800 rounded-xl p-4 sm:p-5 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+            <ShieldPlus className="w-4 h-4 text-amber-400" />
+            THUỐC KHÁNG NẤM ĐIỀU TRỊ
+          </h3>
+          <span className="text-[11px] text-slate-400">Có thể chọn nhiều thuốc</span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5">
+          {antifungalOptions.map((drug) => {
+            const active = data.treatmentFeatures.antifungals?.includes(drug) ?? false;
+            return (
+              <button
+                key={drug}
+                type="button"
+                onClick={() => toggleAntifungal(drug)}
+                className={`flex items-center gap-2 p-2.5 rounded-lg border text-left text-xs font-bold transition cursor-pointer select-none ${
+                  active
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/80 shadow-xs'
+                    : 'bg-slate-900/60 text-slate-300 border-slate-800 hover:border-slate-700 hover:bg-slate-900'
+                }`}
+              >
+                <div
+                  className={`w-4 h-4 rounded flex items-center justify-center shrink-0 border ${
+                    active
+                      ? 'bg-amber-500 border-amber-500 text-slate-950'
+                      : 'border-slate-700 bg-slate-950'
+                  }`}
+                >
+                  {active && <span className="text-[10px] font-black">✓</span>}
+                </div>
+                <span className="leading-tight">{drug}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>

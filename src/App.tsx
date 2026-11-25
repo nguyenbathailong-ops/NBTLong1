@@ -3,20 +3,25 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { PatientCase } from './types/medical';
 import { db, initializeDatabase, createBlankCase } from './db/indexedDB';
-import { Header } from './components/Header';
+import { AppTab, Header } from './components/Header';
 import { Dashboard } from './components/Dashboard';
 import { CaseList } from './components/CaseList';
 import { DataReconciliation } from './components/DataReconciliation';
 import { AnalyticsView } from './components/AnalyticsView';
 import { ClinicalKnowledge } from './components/ClinicalKnowledge';
+import { TrashView } from './components/TrashView';
 import { CaseWizard } from './components/CaseForm/CaseWizard';
 import { CaseDetailModal } from './components/CaseDetailModal';
 import { DataBackupModal } from './components/DataBackupModal';
 import { FirebaseProvider, useFirebaseSync } from './contexts/FirebaseContext';
-import { softDeleteCaseOnCloud } from './services/cloudSync';
+import {
+  moveCaseToTrash,
+  permanentlyDeleteCase,
+  restoreCaseFromTrash,
+} from './services/cloudSync';
 import { useOnlineStatus } from './hooks/usePWAInstall';
 import { auditSingleCase } from './utils/validationAudit';
 import { WifiOff, Plus, HelpCircle, X } from 'lucide-react';
@@ -28,10 +33,8 @@ interface AppContentProps {
 }
 
 function AppContent({ cases, loading, reloadCases }: AppContentProps) {
-  const { user, workspace } = useFirebaseSync();
-  const [currentTab, setCurrentTab] = useState<
-    'dashboard' | 'cases' | 'reconciliation' | 'analytics' | 'knowledge' | 'security'
-  >('dashboard');
+  const { account, isAdmin } = useFirebaseSync();
+  const [currentTab, setCurrentTab] = useState<AppTab>('dashboard');
 
   const [editingCase, setEditingCase] = useState<PatientCase | null>(null);
   const [viewingCase, setViewingCase] = useState<PatientCase | null>(null);
@@ -41,8 +44,21 @@ function AppContent({ cases, loading, reloadCases }: AppContentProps) {
 
   const isOnline = useOnlineStatus();
 
-  // Calculate total audit issues count for badge
-  const totalIssuesCount = cases.reduce((acc, curr) => {
+  const activeCases = useMemo(() => cases.filter((c) => !c.isTrashed), [cases]);
+  const trashedCases = useMemo(
+    () => (isAdmin ? cases.filter((c) => c.isTrashed === true) : []),
+    [cases, isAdmin]
+  );
+
+  // If a user logs out or switches to Guest while on the Trash tab, return to dashboard
+  useEffect(() => {
+    if (currentTab === 'trash' && !isAdmin) {
+      setCurrentTab('dashboard');
+    }
+  }, [currentTab, isAdmin]);
+
+  // Calculate total audit issues count for badge (active cases only)
+  const totalIssuesCount = activeCases.reduce((acc, curr) => {
     const audit = auditSingleCase(curr);
     return acc + audit.inconsistencyCount;
   }, 0);
@@ -56,11 +72,27 @@ function AppContent({ cases, loading, reloadCases }: AppContentProps) {
     setEditingCase(c);
   };
 
-  const handleDeleteCase = async (id: string) => {
-    await db.cases.delete(id);
-    await db.deletedCases.put({ id, deletedAt: Date.now() });
-    if (user && navigator.onLine) {
-      await softDeleteCaseOnCloud(user, id, workspace);
+  const handleMoveToTrash = async (id: string) => {
+    await moveCaseToTrash(account, id);
+    await reloadCases();
+  };
+
+  const handleRestoreFromTrash = async (id: string) => {
+    if (!account || account.role !== 'admin') return;
+    await restoreCaseFromTrash(account, id);
+    await reloadCases();
+  };
+
+  const handlePermanentDelete = async (id: string) => {
+    if (account && account.role !== 'admin') return;
+    await permanentlyDeleteCase(account, id);
+    await reloadCases();
+  };
+
+  const handleEmptyTrash = async () => {
+    if (!account || account.role !== 'admin') return;
+    for (const c of trashedCases) {
+      await permanentlyDeleteCase(account, c.id);
     }
     await reloadCases();
   };
@@ -91,6 +123,7 @@ function AppContent({ cases, loading, reloadCases }: AppContentProps) {
         }}
         onOpenGuide={() => setShowGuideModal(true)}
         issuesCount={totalIssuesCount}
+        trashCount={trashedCases.length}
         zoomLevel={zoomLevel}
         onChangeZoom={handleChangeZoom}
       />
@@ -119,9 +152,11 @@ function AppContent({ cases, loading, reloadCases }: AppContentProps) {
           <>
             {currentTab === 'dashboard' && (
               <Dashboard
-                cases={cases}
+                cases={activeCases}
+                trashedCount={trashedCases.length}
                 onAddNewCase={handleAddNewCase}
                 onOpenAudit={() => setCurrentTab('reconciliation')}
+                onOpenTrash={() => setCurrentTab('trash')}
                 onOpenSafetyModal={() => setShowSafetyModal(true)}
                 onOpenGuide={() => setShowGuideModal(true)}
                 onSelectCase={(c) => setViewingCase(c)}
@@ -130,25 +165,35 @@ function AppContent({ cases, loading, reloadCases }: AppContentProps) {
 
             {currentTab === 'cases' && (
               <CaseList
-                cases={cases}
+                cases={activeCases}
                 onAddNew={handleAddNewCase}
                 onEdit={handleEditCase}
-                onDelete={handleDeleteCase}
+                onMoveToTrash={handleMoveToTrash}
+                onPermanentDelete={handlePermanentDelete}
                 onViewDetails={(c) => setViewingCase(c)}
               />
             )}
 
             {currentTab === 'reconciliation' && (
               <DataReconciliation
-                cases={cases}
+                cases={activeCases}
                 onEditCase={handleEditCase}
                 onRefreshCases={reloadCases}
               />
             )}
 
-            {currentTab === 'analytics' && <AnalyticsView cases={cases} />}
+            {currentTab === 'analytics' && <AnalyticsView cases={activeCases} />}
 
             {currentTab === 'knowledge' && <ClinicalKnowledge />}
+
+            {currentTab === 'trash' && isAdmin && (
+              <TrashView
+                trashedCases={trashedCases}
+                onRestore={handleRestoreFromTrash}
+                onPermanentDelete={handlePermanentDelete}
+                onEmptyTrash={handleEmptyTrash}
+              />
+            )}
           </>
         )}
       </main>
@@ -186,10 +231,10 @@ function AppContent({ cases, loading, reloadCases }: AppContentProps) {
         />
       )}
 
-      {/* SAFETY & BACKUP MODAL */}
+      {/* ACCOUNT, SYNC & BACKUP MODAL */}
       {showSafetyModal && (
         <DataBackupModal
-          cases={cases}
+          cases={activeCases}
           onClose={() => setShowSafetyModal(false)}
           onRefresh={reloadCases}
         />
@@ -217,18 +262,18 @@ function AppContent({ cases, loading, reloadCases }: AppContentProps) {
 
             <div className="space-y-3 text-xs text-slate-300 leading-relaxed max-h-[65vh] overflow-y-auto pr-1">
               <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
-                <strong className="text-teal-400 block mb-1">1. Khả năng chạy Offline & Cài đặt App (PWA):</strong>
-                Rhinolog hoạt động 100% không cần kết nối mạng. Bạn có thể bấm nút <strong>"Cài App Android/Web"</strong> trên thanh điều hướng để cài trực tiếp lên màn hình điện thoại Android như một ứng dụng gốc.
+                <strong className="text-teal-400 block mb-1">1. Phân quyền Admin & Tài khoản khách:</strong>
+                Tài khoản <strong>Admin</strong> có thể tạo thêm tài khoản khách, xóa vĩnh viễn ca bệnh và xem <strong>Thùng rác</strong> để hoàn tác hoặc xóa bỏ ca bệnh do khách xóa. Tài khoản khách chỉ thêm, sửa, xem ca bệnh; khi xóa sẽ chuyển vào Thùng rác của Admin.
               </div>
 
               <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
-                <strong className="text-teal-400 block mb-1">2. Chèn hình ảnh CT Scan & Nội soi trước mổ:</strong>
+                <strong className="text-teal-400 block mb-1">2. Khả năng chạy Offline & Cài đặt App (PWA):</strong>
+                Rhinolog hoạt động 100% không cần kết nối mạng. Dữ liệu lưu trong IndexedDB và tự động đồng bộ hai chiều ngay khi có Internet.
+              </div>
+
+              <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
+                <strong className="text-teal-400 block mb-1">3. Chèn hình ảnh CT Scan & Nội soi trước mổ:</strong>
                 Ở bước 6 (Hình ảnh) hoặc bất cứ lúc nào, bạn có thể bấm trực tiếp vào vùng tải ảnh, kéo thả ảnh hoặc nhấn <code>Ctrl+V</code> để dán ảnh chụp màn hình ngay tức thì.
-              </div>
-
-              <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
-                <strong className="text-teal-400 block mb-1">3. Tính năng Đối Soát Dữ Liệu (Reconciliation):</strong>
-                Tab <strong>"Đối soát"</strong> sẽ tự động kiểm tra xem có mâu thuẫn logic y học nào không (ví dụ: Không mổ nhưng lại có số lần mổ, điểm GCS lệch với phân loại hôn mê, hoặc biến chứng ổ mắt Chandler không khớp với triệu chứng mắt). Bạn có thể bấm vào nút "Sửa ở Bước X" để mở ngay trường cần sửa.
               </div>
 
               <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">

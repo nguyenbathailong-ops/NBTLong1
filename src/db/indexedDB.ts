@@ -73,6 +73,7 @@ export const sampleCase1: PatientCase = {
     proptosis: 'Có',
     visualLossOrDecrease: 'Có',
     ocularMobilityDisorder: 'Có',
+    diplopia: 'Không',
   },
 
   neurologicalSymptoms: {
@@ -136,7 +137,8 @@ export const sampleCase1: PatientCase = {
   snot22Score: 48,
 
   treatmentFeatures: {
-    antibiotics: 'Vancomycin + Ceftriaxone IV',
+    antibiotics: 'Meropenem + Vancomycin',
+    antifungals: [],
     surgeryPerformed: 'Có',
     surgeryCount: 1,
     intraoperativeFindings: {
@@ -146,10 +148,24 @@ export const sampleCase1: PatientCase = {
       papyraceaBoneDestruction: true,
       otherFindings: 'Hủy xương giấy góc trên trong, mủ áp xe dưới màng xương chảy vào hốc mũi',
     },
-    surgicalProcedures: ['FESS TOÀN BỘ XOANG', 'DRAF IIA (MỞ NGÁCH TRÁN)', 'DẪN LƯU ÁP XE DƯỚI MÀNG XƯƠNG'],
+    surgicalProcedures: ['Phẫu thuật nội soi', 'FESS TOÀN BỘ XOANG', 'DRAF IIA (MỞ NGÁCH TRÁN)', 'DẪN LƯU ÁP XE DƯỚI MÀNG XƯƠNG'],
     treatmentDays: 10,
-    treatmentOutcome: 'Cải thiện',
+    treatmentOutcome: 'Hồi phục hoàn toàn',
     mortality: 'Không',
+    sequelae: {
+      ptosis: 'Không',
+      proptosis: 'Không',
+      visualLossOrDecrease: 'Không',
+      ocularMobilityDisorder: 'Không',
+      diplopia: 'Không',
+      focalNeurologicalDeficit: 'Không',
+      seizures: 'Không',
+      meningitis: 'Không',
+      brainAbscess: 'Không',
+      csfLeak: 'Không',
+      cerebralInfarction: 'Không',
+      otherSequelae: 'Không',
+    },
     notes: 'Thị lực hồi phục hoàn toàn sau mổ ngày thứ 3, mắt hết lồi.',
   },
 
@@ -176,6 +192,7 @@ export const sampleCase1: PatientCase = {
         dataUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="100%" height="100%" fill="%23020617"/><circle cx="200" cy="150" r="130" fill="%23881337"/><circle cx="180" cy="140" r="70" fill="%239f1239"/><path d="M 170 120 Q 190 140 185 180 Q 160 170 170 120 Z" fill="%23fef08a" opacity="0.9"/><text x="200" y="280" fill="%23e2e8f0" font-size="13" text-anchor="middle" font-family="sans-serif">NASAL ENDOSCOPY BASELINE (MŨI PHẢI)</text></svg>',
       },
     ],
+    clinicalImages: [],
   },
 };
 
@@ -185,7 +202,7 @@ export const sampleCase2: PatientCase = {
   surgeryDate: '2026-10-05',
   createdAt: Date.now() - 3600 * 12 * 1000,
   updatedAt: Date.now(),
-  syncedToCloud: false,
+  syncedToCloud: true,
 
   age: 51,
   gender: 'Nam',
@@ -226,6 +243,7 @@ export const sampleCase2: PatientCase = {
     proptosis: 'Có',
     visualLossOrDecrease: 'Không',
     ocularMobilityDisorder: 'Có',
+    diplopia: 'Không',
   },
 
   neurologicalSymptoms: {
@@ -288,7 +306,8 @@ export const sampleCase2: PatientCase = {
   snot22Score: 52,
 
   treatmentFeatures: {
-    antibiotics: 'Ceftriaxone + Metronidazole',
+    antibiotics: 'Ceftazidime + Vancomycin',
+    antifungals: [],
     surgeryPerformed: 'Có',
     surgeryCount: 1,
     intraoperativeFindings: {
@@ -297,15 +316,30 @@ export const sampleCase2: PatientCase = {
       necrosisTissue: false,
       papyraceaBoneDestruction: false,
     },
-    surgicalProcedures: ['FESS GIỚI HẠN (SÀNG TRƯỚC–HÀM)'],
+    surgicalProcedures: ['Phẫu thuật nội soi', 'FESS GIỚI HẠN (SÀNG TRƯỚC–HÀM)'],
     treatmentDays: 7,
-    treatmentOutcome: 'Cải thiện',
+    treatmentOutcome: 'Hồi phục hoàn toàn',
     mortality: 'Không',
+    sequelae: {
+      ptosis: 'Không',
+      proptosis: 'Không',
+      visualLossOrDecrease: 'Không',
+      ocularMobilityDisorder: 'Không',
+      diplopia: 'Không',
+      focalNeurologicalDeficit: 'Không',
+      seizures: 'Không',
+      meningitis: 'Không',
+      brainAbscess: 'Không',
+      csfLeak: 'Không',
+      cerebralInfarction: 'Không',
+      otherSequelae: 'Không',
+    },
   },
 
   images: {
     ctScanImages: [],
     endoscopyImages: [],
+    clinicalImages: [],
   },
 };
 
@@ -388,6 +422,7 @@ export function createBlankCase(): PatientCase {
       proptosis: 'Không',
       visualLossOrDecrease: 'Không',
       ocularMobilityDisorder: 'Không',
+      diplopia: 'Không',
     },
 
     neurologicalSymptoms: {
@@ -451,6 +486,7 @@ export function createBlankCase(): PatientCase {
 
     treatmentFeatures: {
       antibiotics: '',
+      antifungals: [],
       surgeryPerformed: 'Có',
       surgeryCount: 1,
       intraoperativeFindings: {
@@ -459,15 +495,30 @@ export function createBlankCase(): PatientCase {
         necrosisTissue: false,
         papyraceaBoneDestruction: false,
       },
-      surgicalProcedures: ['FESS GIỚI HẠN (SÀNG TRƯỚC–HÀM)'],
+      surgicalProcedures: ['Phẫu thuật nội soi'],
       treatmentDays: null,
-      treatmentOutcome: 'Cải thiện',
+      treatmentOutcome: 'Hồi phục hoàn toàn',
       mortality: 'Không',
+      sequelae: {
+        ptosis: 'Không',
+        proptosis: 'Không',
+        visualLossOrDecrease: 'Không',
+        ocularMobilityDisorder: 'Không',
+        diplopia: 'Không',
+        focalNeurologicalDeficit: 'Không',
+        seizures: 'Không',
+        meningitis: 'Không',
+        brainAbscess: 'Không',
+        csfLeak: 'Không',
+        cerebralInfarction: 'Không',
+        otherSequelae: 'Không',
+      },
     },
 
     images: {
       ctScanImages: [],
       endoscopyImages: [],
+      clinicalImages: [],
     },
   };
 

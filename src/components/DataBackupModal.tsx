@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { PatientCase } from '../types/medical';
+import { AppAccount, PatientCase } from '../types/medical';
 import { db } from '../db/indexedDB';
 import { useFirebaseSync } from '../contexts/FirebaseContext';
 import {
@@ -18,6 +18,11 @@ import {
   Copy,
   UserPlus,
   KeyRound,
+  Lock,
+  Unlock,
+  Shield,
+  User as UserIcon,
+  ExternalLink,
 } from 'lucide-react';
 
 interface DataBackupModalProps {
@@ -33,71 +38,115 @@ export const DataBackupModal: React.FC<DataBackupModalProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [workspaceNameInput, setWorkspaceNameInput] = useState<string>('Kho Mũi Xoang Chung');
-  const [joinCodeInput, setJoinCodeInput] = useState<string>('');
-  const [memberEmailInput, setMemberEmailInput] = useState<string>('');
-  const [copiedCode, setCopiedCode] = useState<boolean>(false);
+  const [localErr, setLocalErr] = useState<string | null>(null);
 
   const {
-    user,
-    workspace,
+    account,
+    isAdmin,
+    bootstrapState,
+    managedAccounts,
     isSyncing,
     lastSyncedAt,
     authError,
     clearAuthError,
-    signInWithGoogle,
+    initializeAdminAccount,
+    signInWithAccount,
+    createGuestAccount,
+    toggleGuestActive,
+    deleteGuestAccount,
     signOutUser,
     triggerManualSync,
-    createWorkspace,
-    joinWorkspace,
-    addMemberEmail,
-    removeMemberEmail,
-    leaveWorkspace,
   } = useFirebaseSync();
 
+  // Auth form states
+  const [forceLoginMode, setForceLoginMode] = useState<boolean>(false);
+  const [identifierInput, setIdentifierInput] = useState<string>('');
+  const [passwordInput, setPasswordInput] = useState<string>('');
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState<string>('');
+  const [displayNameInput, setDisplayNameInput] = useState<string>('Admin');
+
+  // Guest creation form states
+  const [guestNameInput, setGuestNameInput] = useState<string>('');
+  const [guestIdentifierInput, setGuestIdentifierInput] = useState<string>('');
+  const [guestPasswordInput, setGuestPasswordInput] = useState<string>('');
+  const [createdGuestInfo, setCreatedGuestInfo] = useState<{
+    username: string;
+    password: string;
+    displayName: string;
+  } | null>(null);
+  const [copiedGuestCreds, setCopiedGuestCreds] = useState<boolean>(false);
+  const [confirmClearLocal, setConfirmClearLocal] = useState<boolean>(false);
+  const [confirmDeleteGuest, setConfirmDeleteGuest] = useState<AppAccount | null>(null);
+
   const pendingCount = cases.filter((c) => !c.syncedToCloud).length;
-  const isWorkspaceOwner = Boolean(user && workspace && workspace.ownerId === user.uid);
+  const showSetupAdminForm = bootstrapState === 'uninitialized' && !forceLoginMode;
 
-  const handleCopyInviteCode = async () => {
-    if (!workspace?.inviteCode) return;
+  const handleBootstrapAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLocalErr(null);
+    setMsg(null);
+    if (passwordInput !== confirmPasswordInput) {
+      setLocalErr('Mật khẩu xác nhận không khớp.');
+      return;
+    }
     try {
-      await navigator.clipboard.writeText(workspace.inviteCode);
-      setCopiedCode(true);
-      setTimeout(() => setCopiedCode(false), 2000);
+      await initializeAdminAccount(identifierInput, passwordInput, displayNameInput);
+      setPasswordInput('');
+      setConfirmPasswordInput('');
+      setMsg('✓ Đã khởi tạo Tài khoản Admin và đồng bộ dữ liệu thành công!');
     } catch {
-      setMsg(`Mã nhóm của bạn: ${workspace.inviteCode}`);
+      // authError set by context
     }
   };
 
-  const handleCreateWorkspace = async (e: React.FormEvent) => {
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLocalErr(null);
+    setMsg(null);
     try {
-      await createWorkspace(workspaceNameInput);
-      setMsg('✓ Đã tạo Kho đồng bộ chung! Hãy thêm Gmail khác hoặc gửi Mã Nhóm để đồng bộ chung.');
+      const loggedIn = await signInWithAccount(identifierInput, passwordInput);
+      setPasswordInput('');
+      setMsg(
+        `✓ Đăng nhập thành công (${loggedIn.role === 'admin' ? 'Admin' : 'Tài khoản khách'}: ${loggedIn.displayName})!`
+      );
     } catch {
-      // authError already set in context
+      // authError set by context
     }
   };
 
-  const handleJoinWorkspace = async (e: React.FormEvent) => {
+  const handleCreateGuest = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLocalErr(null);
+    setMsg(null);
     try {
-      await joinWorkspace(joinCodeInput);
-      setJoinCodeInput('');
-      setMsg('✓ Đã tham gia Kho đồng bộ chung thành công!');
+      const created = await createGuestAccount(
+        guestIdentifierInput,
+        guestPasswordInput,
+        guestNameInput
+      );
+      setCreatedGuestInfo({
+        username: created.username,
+        password: guestPasswordInput,
+        displayName: created.displayName,
+      });
+      setGuestNameInput('');
+      setGuestIdentifierInput('');
+      setGuestPasswordInput('');
+      setMsg(`✓ Đã tạo tài khoản khách "${created.displayName}" (${created.username})!`);
     } catch {
-      // authError already set in context
+      // authError set by context
     }
   };
 
-  const handleAddEmail = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCopyGuestCredentials = async () => {
+    if (!createdGuestInfo) return;
+    const text = `Thông tin đăng nhập RHINOLOG:\n- Tên hiển thị: ${createdGuestInfo.displayName}\n- Tên đăng nhập: ${createdGuestInfo.username}\n- Mật khẩu: ${createdGuestInfo.password}\n- Trang web: ${window.location.origin}`;
     try {
-      await addMemberEmail(memberEmailInput);
-      setMsg(`✓ Đã cấp quyền đồng bộ chung cho ${memberEmailInput.trim().toLowerCase()}!`);
-      setMemberEmailInput('');
+      await navigator.clipboard.writeText(text);
+      setCopiedGuestCreds(true);
+      setTimeout(() => setCopiedGuestCreds(false), 2500);
     } catch {
-      // authError already set in context
+      setMsg(`Tài khoản: ${createdGuestInfo.username} | Mật khẩu: ${createdGuestInfo.password}`);
     }
   };
 
@@ -123,36 +172,39 @@ export const DataBackupModal: React.FC<DataBackupModalProps> = ({
         if (Array.isArray(imported)) {
           const normalized = imported.map((item) => ({
             ...item,
+            isTrashed: false,
+            trashedAt: undefined,
+            trashedBy: undefined,
             syncedToCloud: false,
             updatedAt: Date.now(),
           }));
           await db.cases.bulkPut(normalized);
           setMsg(`✓ Đã phục hồi thành công ${normalized.length} ca bệnh!`);
           onRefresh();
-          if (user && navigator.onLine) {
+          if (account && navigator.onLine) {
             await triggerManualSync();
           }
         } else {
-          setMsg('Tập tin không đúng cấu trúc danh sách ca bệnh.');
+          setLocalErr('Tập tin không đúng cấu trúc danh sách ca bệnh.');
         }
       } catch {
-        setMsg('Lỗi đọc tập tin JSON.');
+        setLocalErr('Lỗi đọc tập tin JSON.');
       }
     };
     reader.readAsText(file);
   };
 
-  const handleClearAll = async () => {
-    if (
-      confirm(
-        'CẢNH BÁO: Thao tác này sẽ xoá toàn bộ ca bệnh khỏi bộ nhớ máy này (không xoá dữ liệu đã đồng bộ trên Cloud). Bạn đã sao lưu JSON chưa?'
-      )
-    ) {
-      await db.cases.clear();
-      onRefresh();
-      setMsg('Đã xoá sạch bộ nhớ cục bộ trên thiết bị này.');
-    }
+  const handleClearLocalDb = async () => {
+    await db.cases.clear();
+    setConfirmClearLocal(false);
+    onRefresh();
+    setMsg('Đã xoá sạch bộ nhớ cục bộ trên thiết bị này.');
   };
+
+  const combinedError = localErr || authError;
+  const needsEmailProviderNotice = Boolean(
+    combinedError && combinedError.includes('Email/Password')
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 overflow-y-auto">
@@ -161,7 +213,7 @@ export const DataBackupModal: React.FC<DataBackupModalProps> = ({
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-5 h-5 text-teal-400" />
             <h3 className="font-serif font-bold text-base text-white">
-              Đồng Bộ Đám Mây & Nhiều Tài Khoản
+              Tài Khoản Hệ Thống & Đồng Bộ Dữ Liệu
             </h3>
           </div>
           <button
@@ -180,76 +232,236 @@ export const DataBackupModal: React.FC<DataBackupModalProps> = ({
           </div>
         )}
 
-        {authError && (
-          <div className="p-3 rounded-lg bg-rose-950/80 border border-rose-700 text-rose-200 text-xs space-y-1.5">
+        {combinedError && (
+          <div className="p-3 rounded-lg bg-rose-950/80 border border-rose-700 text-rose-200 text-xs space-y-2">
             <div className="flex items-start justify-between gap-2">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                <span className="leading-relaxed">{authError}</span>
+                <span className="leading-relaxed">{combinedError}</span>
               </div>
               <button
                 type="button"
-                onClick={clearAuthError}
+                onClick={() => {
+                  setLocalErr(null);
+                  clearAuthError();
+                }}
                 className="text-rose-300 hover:text-white shrink-0 cursor-pointer"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
+            {needsEmailProviderNotice && (
+              <a
+                href="https://console.firebase.google.com/project/keen-buckeye-qflln/authentication/providers"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-rose-900/70 hover:bg-rose-800 text-white font-semibold text-[11px] transition"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Mở Firebase Console để bật Email/Password
+              </a>
+            )}
           </div>
         )}
 
-        {/* CLOUD SYNC PANEL */}
+        {/* AUTH / CLOUD SYNC PANEL */}
         <div className="p-4 rounded-xl bg-gradient-to-br from-[#0e1b33] to-[#0a1324] border border-teal-500/40 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Cloud className="w-4 h-4 text-teal-400" />
               <span className="font-bold text-xs uppercase tracking-wider text-teal-300">
-                Tài khoản đồng bộ (Cloud Sync)
+                {account
+                  ? 'Tài khoản đang đồng bộ'
+                  : showSetupAdminForm
+                  ? 'Khởi tạo Tài khoản Admin đầu tiên'
+                  : 'Đăng nhập tài khoản tự tạo'}
               </span>
             </div>
-            {user && (
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950/80 border border-emerald-700 text-emerald-300">
-                {isSyncing ? 'ĐANG ĐỒNG BỘ...' : 'ĐÃ KẾT NỐI'}
+            {account && (
+              <span
+                className={`text-[10px] font-mono px-2 py-0.5 rounded border font-bold ${
+                  isAdmin
+                    ? 'bg-amber-950/80 border-amber-600 text-amber-300'
+                    : 'bg-cyan-950/80 border-cyan-700 text-cyan-300'
+                }`}
+              >
+                {isAdmin ? 'ADMIN TOÀN QUYỀN' : 'TÀI KHOẢN KHÁCH'}
               </span>
             )}
           </div>
 
-          {!user ? (
-            <div className="space-y-3">
-              <p className="text-xs text-slate-300 leading-relaxed">
-                Đăng nhập bằng Google để đồng bộ ca bệnh giữa nhiều thiết bị, hoặc liên kết{' '}
-                <strong>nhiều tài khoản Google khác nhau</strong> vào cùng một Kho Đồng Bộ Chung.
-              </p>
-              <button
-                type="button"
-                onClick={signInWithGoogle}
-                className="w-full py-2.5 px-4 rounded-lg bg-teal-400 hover:bg-teal-300 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer shadow-lg shadow-teal-500/15"
-              >
-                <LogIn className="w-4 h-4" />
-                Đăng nhập bằng Google
-              </button>
-            </div>
+          {!account ? (
+            showSetupAdminForm ? (
+              <form onSubmit={handleBootstrapAdmin} className="space-y-3">
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Tạo tài khoản <strong>Admin chính</strong> của bạn. Tài khoản này có toàn quyền tạo tài khoản khách, xóa vĩnh viễn ca bệnh và kiểm soát Thùng rác.
+                </p>
+
+                <div className="space-y-2">
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                      Tên hiển thị (VD: BS. Nguyễn Bá Thái Long)
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={displayNameInput}
+                      onChange={(e) => setDisplayNameInput(e.target.value)}
+                      placeholder="Nhập tên hiển thị..."
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-teal-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                      Tên đăng nhập hoặc Email tự tạo (VD: admin hoặc nguyenbathailong@gmail.com)
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={identifierInput}
+                      onChange={(e) => setIdentifierInput(e.target.value)}
+                      placeholder="VD: admin hoặc email của bạn"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-teal-400"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                        Mật khẩu (tối thiểu 6 ký tự)
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        minLength={6}
+                        value={passwordInput}
+                        onChange={(e) => setPasswordInput(e.target.value)}
+                        placeholder="Nhập mật khẩu..."
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-teal-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                        Nhập lại mật khẩu
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        minLength={6}
+                        value={confirmPasswordInput}
+                        onChange={(e) => setConfirmPasswordInput(e.target.value)}
+                        placeholder="Xác nhận mật khẩu..."
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-teal-400"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSyncing}
+                  className="w-full py-2.5 px-4 rounded-lg bg-teal-400 hover:bg-teal-300 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50"
+                >
+                  <Shield className="w-4 h-4" />
+                  {isSyncing ? 'Đang khởi tạo...' : 'Tạo Tài Khoản Admin & Bắt Đầu'}
+                </button>
+
+                <div className="text-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForceLoginMode(true);
+                      setLocalErr(null);
+                      clearAuthError();
+                    }}
+                    className="text-[11px] text-cyan-400 hover:underline cursor-pointer"
+                  >
+                    Đã có tài khoản Admin hoặc Khách? Chuyển sang Đăng nhập
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleSignIn} className="space-y-3">
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Đăng nhập bằng tài khoản <strong>Admin</strong> hoặc <strong>Tài khoản khách</strong> do Admin cấp để đồng bộ dữ liệu trên mọi thiết bị.
+                </p>
+
+                <div className="space-y-2">
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                      Tên đăng nhập hoặc Email
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={identifierInput}
+                      onChange={(e) => setIdentifierInput(e.target.value)}
+                      placeholder="VD: admin, khach1 hoặc email..."
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-teal-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                      Mật khẩu
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      value={passwordInput}
+                      onChange={(e) => setPasswordInput(e.target.value)}
+                      placeholder="Nhập mật khẩu..."
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-teal-400"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSyncing}
+                  className="w-full py-2.5 px-4 rounded-lg bg-teal-400 hover:bg-teal-300 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50"
+                >
+                  <LogIn className="w-4 h-4" />
+                  {isSyncing ? 'Đang đăng nhập...' : 'Đăng nhập & Đồng bộ'}
+                </button>
+
+                {bootstrapState === 'uninitialized' && (
+                  <div className="text-center">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForceLoginMode(false);
+                        setLocalErr(null);
+                        clearAuthError();
+                      }}
+                      className="text-[11px] text-teal-400 hover:underline cursor-pointer"
+                    >
+                      Chưa có Admin? Khởi tạo Tài khoản Admin đầu tiên
+                    </button>
+                  </div>
+                )}
+              </form>
+            )
           ) : (
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-3 bg-slate-950/60 p-2.5 rounded-lg border border-slate-800">
                 <div className="flex items-center gap-2.5 min-w-0">
-                  {user.photoURL ? (
-                    <img
-                      src={user.photoURL}
-                      alt={user.displayName || 'User'}
-                      className="w-8 h-8 rounded-full border border-teal-500/50 shrink-0"
-                    />
-                  ) : (
-                    <div className="w-8 h-8 rounded-full bg-teal-500/20 border border-teal-500/40 flex items-center justify-center text-teal-300 font-bold text-xs shrink-0">
-                      {(user.email || 'U')[0].toUpperCase()}
-                    </div>
-                  )}
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 border ${
+                      isAdmin
+                        ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+                        : 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300'
+                    }`}
+                  >
+                    {isAdmin ? <Shield className="w-4 h-4" /> : <UserIcon className="w-4 h-4" />}
+                  </div>
                   <div className="min-w-0">
                     <div className="text-xs font-bold text-white truncate">
-                      {user.displayName || 'Bác sĩ'}
+                      {account.displayName}
                     </div>
                     <div className="text-[11px] text-slate-400 truncate font-mono">
-                      {user.email}
+                      TK: {account.username}
                     </div>
                   </div>
                 </div>
@@ -292,179 +504,179 @@ export const DataBackupModal: React.FC<DataBackupModalProps> = ({
           )}
         </div>
 
-        {/* MULTI-ACCOUNT SHARED WORKSPACE PANEL */}
-        {user && (
+        {/* GUEST ROLE PERMISSIONS SUMMARY */}
+        {account && !isAdmin && (
+          <div className="p-3.5 rounded-xl bg-cyan-950/30 border border-cyan-800/60 text-xs text-cyan-200 space-y-1">
+            <div className="font-bold flex items-center gap-1.5 text-cyan-300">
+              <KeyRound className="w-3.5 h-3.5" /> Quyền hạn Tài khoản Khách
+            </div>
+            <p className="text-[11px] text-slate-300 leading-relaxed">
+              Bạn có quyền <strong>Xem dữ liệu</strong>, <strong>Thêm ca bệnh mới</strong> và <strong>Chỉnh sửa ca bệnh</strong>. Khi bạn bấm xóa một ca bệnh, dữ liệu sẽ được chuyển vào <strong>Thùng rác của Admin</strong> để Admin duyệt hoàn tác hoặc xóa vĩnh viễn.
+            </p>
+          </div>
+        )}
+
+        {/* ADMIN ONLY: GUEST ACCOUNT MANAGEMENT PANEL */}
+        {account && isAdmin && (
           <div className="p-4 rounded-xl bg-[#0d162a] border border-cyan-500/35 space-y-3.5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Users className="w-4 h-4 text-cyan-400" />
                 <span className="font-bold text-xs uppercase tracking-wider text-cyan-300">
-                  Đồng bộ chung nhiều tài khoản
+                  Quản lý Tài khoản Khách (Admin)
                 </span>
               </div>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-300">
-                {workspace ? `${workspace.memberEmails.length} TÀI KHOẢN` : 'KHO CÁ NHÂN'}
+                {managedAccounts.filter((a) => a.role === 'guest').length} TÀI KHOẢN KHÁCH
               </span>
             </div>
 
-            {!workspace ? (
-              <div className="space-y-4">
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  Hiện tài khoản này đang đồng bộ riêng. Để nhiều tài khoản Google khác nhau dùng chung 1 cơ sở dữ liệu ca bệnh, bạn có thể <strong>Tạo Kho Chung</strong> hoặc <strong>Nhập Mã Nhóm</strong> của tài khoản kia:
-                </p>
-
-                {/* Create Shared Workspace */}
-                <form onSubmit={handleCreateWorkspace} className="space-y-2 p-3 rounded-lg bg-slate-950/60 border border-slate-800">
-                  <label className="text-[11px] font-bold text-slate-200 block">
-                    Cách 1: Tạo Kho Chung mới (trên tài khoản chính)
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={workspaceNameInput}
-                      onChange={(e) => setWorkspaceNameInput(e.target.value)}
-                      placeholder="Tên kho chung..."
-                      className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-400"
-                    />
-                    <button
-                      type="submit"
-                      disabled={isSyncing}
-                      className="px-3.5 py-1.5 rounded-lg bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold text-xs transition cursor-pointer shrink-0 disabled:opacity-50"
-                    >
-                      Tạo Kho Chung
-                    </button>
-                  </div>
-                </form>
-
-                {/* Join Existing Workspace by Invite Code */}
-                <form onSubmit={handleJoinWorkspace} className="space-y-2 p-3 rounded-lg bg-slate-950/60 border border-slate-800">
-                  <label className="text-[11px] font-bold text-slate-200 block">
-                    Cách 2: Tham gia Kho Chung bằng Mã Nhóm
-                  </label>
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <KeyRound className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2" />
-                      <input
-                        type="text"
-                        value={joinCodeInput}
-                        onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
-                        placeholder="Nhập mã (VD: RHINO-A3F9K2)"
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs font-mono text-white uppercase focus:outline-none focus:border-teal-400"
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      disabled={isSyncing || !joinCodeInput.trim()}
-                      className="px-3.5 py-1.5 rounded-lg bg-teal-400 hover:bg-teal-300 text-slate-950 font-bold text-xs transition cursor-pointer shrink-0 disabled:opacity-50"
-                    >
-                      Tham gia
-                    </button>
-                  </div>
-                </form>
+            <form
+              onSubmit={handleCreateGuest}
+              className="space-y-2.5 p-3 rounded-lg bg-slate-950/70 border border-slate-800"
+            >
+              <label className="text-[11px] font-bold text-slate-200 block">
+                Tạo tài khoản khách mới (chỉ xem, thêm, sửa; xóa sẽ vào Thùng rác):
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <input
+                  type="text"
+                  required
+                  value={guestNameInput}
+                  onChange={(e) => setGuestNameInput(e.target.value)}
+                  placeholder="Tên hiển thị (VD: BS. Lan)"
+                  className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-400"
+                />
+                <input
+                  type="text"
+                  required
+                  value={guestIdentifierInput}
+                  onChange={(e) => setGuestIdentifierInput(e.target.value)}
+                  placeholder="Tên ĐN (VD: khach1)"
+                  className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-400"
+                />
+                <input
+                  type="text"
+                  required
+                  minLength={6}
+                  value={guestPasswordInput}
+                  onChange={(e) => setGuestPasswordInput(e.target.value)}
+                  placeholder="Mật khẩu (>= 6 ký tự)"
+                  className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-400"
+                />
               </div>
-            ) : (
-              <div className="space-y-3">
-                {/* Active Workspace Header & Invite Code */}
-                <div className="p-3 rounded-lg bg-slate-950/70 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div>
-                    <div className="text-xs font-bold text-white">{workspace.name}</div>
-                    <div className="text-[11px] text-slate-400">
-                      Tất cả tài khoản dưới đây đều tự động đồng bộ chung
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="px-2.5 py-1 rounded bg-cyan-950/80 border border-cyan-700 text-cyan-300 font-mono text-xs font-bold">
-                      {workspace.inviteCode}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleCopyInviteCode}
-                      className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 cursor-pointer"
-                      title="Sao chép Mã Nhóm"
-                    >
-                      {copiedCode ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5" />
-                      )}
-                    </button>
-                  </div>
-                </div>
+              <button
+                type="submit"
+                disabled={isSyncing}
+                className="w-full py-2 px-3 rounded-lg bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                {isSyncing ? 'Đang tạo tài khoản...' : 'Tạo Tài Khoản Khách'}
+              </button>
+            </form>
 
-                {/* Add Collaborator Email (Owner only) */}
-                {isWorkspaceOwner && (
-                  <form onSubmit={handleAddEmail} className="space-y-1.5">
-                    <label className="text-[11px] text-slate-300 font-semibold block">
-                      Thêm Gmail khác để cùng đồng bộ chung (tài khoản đó đăng nhập là tự thấy ngay):
-                    </label>
-                    <div className="flex gap-2">
-                      <input
-                        type="email"
-                        value={memberEmailInput}
-                        onChange={(e) => setMemberEmailInput(e.target.value)}
-                        placeholder="nhap-gmail-khac@gmail.com"
-                        className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-400"
-                      />
-                      <button
-                        type="submit"
-                        disabled={isSyncing || !memberEmailInput.trim()}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold text-xs transition cursor-pointer disabled:opacity-50"
-                      >
-                        <UserPlus className="w-3.5 h-3.5" /> Thêm
-                      </button>
-                    </div>
-                  </form>
-                )}
-
-                {/* Member Emails List */}
-                <div className="space-y-1.5">
-                  <span className="text-[11px] font-semibold text-slate-400 block">
-                    Danh sách tài khoản đồng bộ chung ({workspace.memberEmails.length}/20):
+            {createdGuestInfo && (
+              <div className="p-3 rounded-lg bg-emerald-950/40 border border-emerald-700/70 text-xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-emerald-300">
+                    Thông tin tài khoản khách vừa tạo:
                   </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {workspace.memberEmails.map((email) => {
-                      const isSelf = email === (user.email || '').toLowerCase();
-                      return (
-                        <span
-                          key={email}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-700 text-[11px] font-mono text-slate-200"
-                        >
-                          <span>{email}</span>
-                          {isSelf && (
-                            <span className="text-[10px] text-teal-400">(bạn)</span>
-                          )}
-                          {isWorkspaceOwner && !isSelf && (
-                            <button
-                              type="button"
-                              onClick={() => removeMemberEmail(email)}
-                              className="text-slate-500 hover:text-rose-400 cursor-pointer"
-                              title="Xóa quyền đồng bộ của email này"
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
-                          )}
-                        </span>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="pt-1 flex justify-end">
                   <button
                     type="button"
-                    onClick={async () => {
-                      if (confirm('Chuyển tài khoản này về Kho Cá Nhân riêng?')) {
-                        await leaveWorkspace();
-                        setMsg('Đã chuyển tài khoản về chế độ Kho Cá Nhân.');
-                      }
-                    }}
-                    className="text-[11px] text-slate-400 hover:text-rose-300 underline cursor-pointer"
+                    onClick={handleCopyGuestCredentials}
+                    className="flex items-center gap-1 px-2 py-1 rounded bg-emerald-900/70 hover:bg-emerald-800 text-emerald-100 text-[11px] font-semibold cursor-pointer"
                   >
-                    Ngắt kết nối kho chung (về kho cá nhân)
+                    {copiedGuestCreds ? (
+                      <>
+                        <Check className="w-3 h-3" /> Đã sao chép
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3 h-3" /> Sao chép gửi khách
+                      </>
+                    )}
                   </button>
+                </div>
+                <div className="font-mono text-[11px] text-slate-200 space-y-0.5">
+                  <div>• Tên: {createdGuestInfo.displayName}</div>
+                  <div>• Tên đăng nhập: {createdGuestInfo.username}</div>
+                  <div>• Mật khẩu: {createdGuestInfo.password}</div>
                 </div>
               </div>
             )}
+
+            {/* List of Guest Accounts */}
+            <div className="space-y-2">
+              <span className="text-[11px] font-semibold text-slate-400 block">
+                Danh sách tài khoản đã tạo:
+              </span>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                {managedAccounts.filter((a) => a.role === 'guest').length === 0 ? (
+                  <p className="text-[11px] text-slate-500 italic">
+                    Chưa có tài khoản khách nào. Bạn có thể tạo ở biểu mẫu phía trên.
+                  </p>
+                ) : (
+                  managedAccounts
+                    .filter((a) => a.role === 'guest')
+                    .map((guest) => (
+                      <div
+                        key={guest.uid}
+                        className="flex items-center justify-between gap-2 p-2.5 rounded-lg bg-slate-950/70 border border-slate-800"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-white truncate">
+                              {guest.displayName}
+                            </span>
+                            <span
+                              className={`px-1.5 py-0.2 rounded text-[9px] font-mono border ${
+                                guest.active
+                                  ? 'bg-emerald-950 border-emerald-700 text-emerald-300'
+                                  : 'bg-rose-950 border-rose-700 text-rose-300'
+                              }`}
+                            >
+                              {guest.active ? 'HOẠT ĐỘNG' : 'ĐÃ KHÓA'}
+                            </span>
+                          </div>
+                          <div className="text-[11px] font-mono text-slate-400 truncate">
+                            {guest.username}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            disabled={isSyncing}
+                            onClick={() => toggleGuestActive(guest.uid, !guest.active)}
+                            className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                            title={guest.active ? 'Tạm khóa tài khoản này' : 'Mở khóa tài khoản này'}
+                          >
+                            {guest.active ? (
+                              <>
+                                <Lock className="w-3 h-3 text-amber-400" /> Khóa
+                              </>
+                            ) : (
+                              <>
+                                <Unlock className="w-3 h-3 text-emerald-400" /> Mở
+                              </>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={isSyncing}
+                            onClick={() => setConfirmDeleteGuest(guest)}
+                            className="px-2 py-1 rounded bg-rose-950/70 hover:bg-rose-900 border border-rose-800 text-rose-200 text-[11px] font-semibold cursor-pointer"
+                            title="Thu hồi & xóa tài khoản khách"
+                          >
+                            Xóa
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                )}
+              </div>
+            </div>
           </div>
         )}
 
@@ -473,7 +685,9 @@ export const DataBackupModal: React.FC<DataBackupModalProps> = ({
           <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center justify-between">
             <div>
               <span className="font-bold text-white block">Sao lưu dự phòng (JSON)</span>
-              <span className="text-slate-400">Xuất toàn bộ {cases.length} ca bệnh & hình ảnh ra máy</span>
+              <span className="text-slate-400">
+                Xuất toàn bộ {cases.length} ca bệnh & hình ảnh ra máy
+              </span>
             </div>
             <button
               type="button"
@@ -507,20 +721,89 @@ export const DataBackupModal: React.FC<DataBackupModalProps> = ({
             </div>
           </div>
 
-          <div className="p-3 rounded-xl bg-rose-950/20 border border-rose-900/40 flex items-center justify-between">
-            <div>
-              <span className="font-bold text-rose-300 block">Xóa dữ liệu bộ nhớ cục bộ</span>
-              <span className="text-slate-400">Đặt lại cơ sở dữ liệu IndexedDB trên thiết bị này</span>
+          {/* Admin-only Local Reset */}
+          {(!account || isAdmin) && (
+            <div className="p-3 rounded-xl bg-rose-950/20 border border-rose-900/40 space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-bold text-rose-300 block">
+                    Xóa dữ liệu bộ nhớ cục bộ
+                  </span>
+                  <span className="text-slate-400">
+                    Đặt lại cơ sở dữ liệu IndexedDB trên thiết bị này
+                  </span>
+                </div>
+                {!confirmClearLocal && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmClearLocal(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-900 hover:bg-rose-800 text-rose-100 font-bold text-xs transition cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Xoá sạch
+                  </button>
+                )}
+              </div>
+
+              {confirmClearLocal && (
+                <div className="p-2.5 rounded-lg bg-rose-950/70 border border-rose-700 flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-rose-200">
+                    Xác nhận xoá toàn bộ dữ liệu cục bộ trên máy này?
+                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmClearLocal(false)}
+                      className="px-2.5 py-1 rounded bg-slate-800 text-slate-200 text-[11px] cursor-pointer"
+                    >
+                      Hủy
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleClearLocalDb}
+                      className="px-2.5 py-1 rounded bg-rose-600 text-white font-bold text-[11px] cursor-pointer"
+                    >
+                      Xóa sạch
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-            <button
-              type="button"
-              onClick={handleClearAll}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-900 hover:bg-rose-800 text-rose-100 font-bold text-xs transition cursor-pointer"
-            >
-              <Trash2 className="w-3.5 h-3.5" /> Xoá sạch
-            </button>
-          </div>
+          )}
         </div>
+
+        {/* Confirm Delete Guest Modal */}
+        {confirmDeleteGuest && (
+          <div className="p-3.5 rounded-xl bg-rose-950/70 border border-rose-700 space-y-2.5">
+            <div className="text-xs font-bold text-white">
+              Thu hồi và xóa tài khoản khách "{confirmDeleteGuest.displayName}" (
+              {confirmDeleteGuest.username})?
+            </div>
+            <p className="text-[11px] text-rose-200">
+              Tài khoản này sẽ không thể xem hay đồng bộ ca bệnh nữa.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteGuest(null)}
+                className="px-3 py-1 rounded bg-slate-800 text-slate-200 text-xs cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const target = confirmDeleteGuest;
+                  setConfirmDeleteGuest(null);
+                  await deleteGuestAccount(target.uid);
+                  setMsg(`✓ Đã xóa quyền truy cập của ${target.displayName}.`);
+                }}
+                className="px-3 py-1 rounded bg-rose-600 text-white font-bold text-xs cursor-pointer"
+              >
+                Xác nhận xóa
+              </button>
+            </div>
+          </div>
+        )}
 
         <button
           type="button"

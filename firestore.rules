@@ -11,20 +11,12 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isEmailVerified() {
-      return isSignedIn() && request.auth.token.email_verified == true;
-    }
-
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
 
     function isValidId(id) {
       return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
-    function isValidInviteCode(code) {
-      return code is string && code.size() >= 4 && code.size() <= 32 && code.matches('^[A-Z0-9\\-]+$');
     }
 
     function incoming() {
@@ -43,41 +35,73 @@ service cloud.firestore {
       return !(key in data) || data[key] == null || data[key] is number;
     }
 
-    function isValidMemberArrays(data) {
-      return data.memberUids is list
-        && data.memberUids.size() >= 1
-        && data.memberUids.size() <= 20
-        && data.memberUids[0] is string
-        && data.memberEmails is list
-        && data.memberEmails.size() >= 1
-        && data.memberEmails.size() <= 20
-        && data.memberEmails[0] is string;
+    // Trusted RBAC helpers (used only in get/create/update/delete, never in list)
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
 
-    function isDocMember(data) {
-      return isEmailVerified()
-        && (
-          request.auth.uid in data.memberUids ||
-          (request.auth.token.email is string && request.auth.token.email in data.memberEmails)
-        );
+    function hasAccount() {
+      return isSignedIn() && exists(/databases/$(database)/documents/accounts/$(request.auth.uid));
     }
 
-    // Validation Blueprint: UserProfile
-    function isValidUserProfile(data, userId) {
-      return data.keys().hasAll(['uid', 'email', 'displayName', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['uid', 'email', 'displayName', 'photoURL', 'activeWorkspaceId', 'createdAt', 'updatedAt'])
-        && isValidId(data.uid)
-        && data.uid == userId
-        && data.uid == request.auth.uid
-        && data.email is string && data.email.size() > 0 && data.email.size() <= 320
-        && data.displayName is string && data.displayName.size() <= 160
-        && isOptionalString(data, 'photoURL', 1000)
-        && isOptionalString(data, 'activeWorkspaceId', 128)
+    function accountData() {
+      return get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data;
+    }
+
+    function isActiveAccount() {
+      return hasAccount() && accountData().active == true;
+    }
+
+    function isValidAuthorizedUids(data) {
+      return data.authorizedUids is list
+        && data.authorizedUids.size() >= 1
+        && data.authorizedUids.size() <= 50
+        && data.authorizedUids[0] is string
+        && data.adminUid in data.authorizedUids;
+    }
+
+    // Validation Blueprint: AppBootstrap
+    function isValidBootstrap(data) {
+      return data.keys().hasAll(['id', 'initialized', 'adminUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'initialized', 'adminUid', 'createdAt', 'updatedAt'])
+        && data.id == 'bootstrap'
+        && data.initialized == true
+        && isValidId(data.adminUid)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
 
-    // Validation Blueprint: ClinicalCase payload
+    // Validation Blueprint: AdminMarker
+    function isValidAdminMarker(data, userId) {
+      return data.keys().hasAll(['uid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.uid == userId
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: AppAccount
+    function isValidAppAccount(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'username', 'email', 'displayName', 'role', 'adminUid', 'active', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'username', 'email', 'displayName', 'role', 'adminUid', 'active', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.uid)
+        && data.uid == userId
+        && data.username is string && data.username.size() >= 2 && data.username.size() <= 160
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 320
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 160
+        && data.role in ['admin', 'guest']
+        && isValidId(data.adminUid)
+        && data.active is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: ClinicCase payload
     function isValidCasePayload(payload) {
       return payload is map
         && payload.keys().hasAll([
@@ -118,27 +142,35 @@ service cloud.firestore {
         && payload.nasalPolypScoreL is number && payload.nasalPolypScoreL >= 0 && payload.nasalPolypScoreL <= 4
         && isOptionalNumber(payload, 'snot22Score')
         && payload.treatmentFeatures is map
-        && (!( 'auditStatus' in payload ) || payload.auditStatus == null || payload.auditStatus is map);
+        && (!('auditStatus' in payload) || payload.auditStatus == null || payload.auditStatus is map);
     }
 
-    // Validation Blueprint: Personal ClinicalCase
-    function isValidClinicalCase(data, caseId) {
+    // Validation Blueprint: ClinicCase
+    function isValidClinicCase(data, caseId) {
       return data.keys().hasAll([
-          'id', 'ownerId', 'caseCode', 'surgeryDate', 'primaryDiagnosis',
-          'surgeryType', 'complexityGrade', 'totalLundMackayScore',
-          'clientCreatedAt', 'clientUpdatedAt', 'deleted', 'createdAt',
-          'updatedAt', 'casePayload'
+          'id', 'adminUid', 'ownerId', 'lastEditedBy', 'authorizedUids',
+          'isTrashed', 'trashedAt', 'trashedBy', 'deleted',
+          'caseCode', 'surgeryDate', 'primaryDiagnosis', 'surgeryType',
+          'complexityGrade', 'totalLundMackayScore', 'clientCreatedAt',
+          'clientUpdatedAt', 'createdAt', 'updatedAt', 'casePayload'
         ])
         && data.keys().hasOnly([
-          'id', 'ownerId', 'caseCode', 'surgeryDate', 'primaryDiagnosis',
-          'surgeryType', 'complexityGrade', 'totalLundMackayScore',
-          'clientCreatedAt', 'clientUpdatedAt', 'deleted', 'createdAt',
-          'updatedAt', 'casePayload'
+          'id', 'adminUid', 'ownerId', 'lastEditedBy', 'authorizedUids',
+          'isTrashed', 'trashedAt', 'trashedBy', 'deleted',
+          'caseCode', 'surgeryDate', 'primaryDiagnosis', 'surgeryType',
+          'complexityGrade', 'totalLundMackayScore', 'clientCreatedAt',
+          'clientUpdatedAt', 'createdAt', 'updatedAt', 'casePayload'
         ])
         && isValidId(data.id)
         && data.id == caseId
+        && isValidId(data.adminUid)
         && isValidId(data.ownerId)
-        && data.ownerId == request.auth.uid
+        && data.lastEditedBy is string && data.lastEditedBy.size() <= 160
+        && isValidAuthorizedUids(data)
+        && data.isTrashed is bool
+        && isOptionalNumber(data, 'trashedAt')
+        && isOptionalString(data, 'trashedBy', 160)
+        && data.deleted is bool
         && data.caseCode is string && data.caseCode.size() >= 1 && data.caseCode.size() <= 64
         && data.surgeryDate is string && data.surgeryDate.size() <= 20 && data.surgeryDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
         && data.primaryDiagnosis is string && data.primaryDiagnosis.size() <= 500
@@ -147,30 +179,32 @@ service cloud.firestore {
         && data.totalLundMackayScore is number && data.totalLundMackayScore >= 0 && data.totalLundMackayScore <= 24
         && data.clientCreatedAt is number
         && data.clientUpdatedAt is number
-        && data.deleted is bool
         && data.createdAt is timestamp
         && data.updatedAt is timestamp
         && isValidCasePayload(data.casePayload);
     }
 
-    // Validation Blueprint: Personal CaseImage
-    function isValidCaseImage(data, imageId, caseId) {
+    // Validation Blueprint: ClinicCaseImage
+    function isValidClinicCaseImage(data, imageId, caseId) {
       return data.keys().hasAll([
-          'id', 'ownerId', 'caseId', 'type', 'timing', 'title',
-          'notes', 'dataUrl', 'uploadedAt', 'deleted', 'createdAt', 'updatedAt'
+          'id', 'adminUid', 'ownerId', 'caseId', 'authorizedUids',
+          'type', 'timing', 'title', 'notes', 'dataUrl', 'uploadedAt',
+          'deleted', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'id', 'ownerId', 'caseId', 'type', 'timing', 'title',
-          'notes', 'dataUrl', 'uploadedAt', 'deleted', 'createdAt', 'updatedAt'
+          'id', 'adminUid', 'ownerId', 'caseId', 'authorizedUids',
+          'type', 'timing', 'title', 'notes', 'dataUrl', 'uploadedAt',
+          'deleted', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.id)
         && data.id == imageId
+        && isValidId(data.adminUid)
         && isValidId(data.ownerId)
-        && data.ownerId == request.auth.uid
         && isValidId(data.caseId)
         && data.caseId == caseId
-        && data.type in ['CT_SCAN', 'ENDOSCOPY']
-        && data.timing in ['PRE_OP', 'POST_OP']
+        && isValidAuthorizedUids(data)
+        && data.type in ['CT_SCAN', 'ENDOSCOPY', 'CLINICAL_PHOTO']
+        && data.timing in ['PRE_OP', 'POST_OP', 'DISCHARGE']
         && data.title is string && data.title.size() <= 200
         && data.notes is string && data.notes.size() <= 1000
         && data.dataUrl is string && data.dataUrl.size() <= 750000
@@ -180,382 +214,252 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
-    // Validation Blueprint: SharedWorkspace
-    function isValidWorkspace(data, workspaceId) {
-      return data.keys().hasAll([
-          'id', 'name', 'ownerId', 'inviteCode', 'memberUids', 'memberEmails', 'createdAt', 'updatedAt'
-        ])
-        && data.keys().hasOnly([
-          'id', 'name', 'ownerId', 'inviteCode', 'memberUids', 'memberEmails', 'createdAt', 'updatedAt'
-        ])
-        && isValidId(data.id)
-        && data.id == workspaceId
-        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
-        && isValidId(data.ownerId)
-        && isValidInviteCode(data.inviteCode)
-        && isValidMemberArrays(data)
-        && data.createdAt is timestamp
-        && data.updatedAt is timestamp;
+    // Singleton Admin Bootstrap Lock (zero PII)
+    match /appMeta/{docId} {
+      allow get: if docId == 'bootstrap';
+      allow list: if false;
+      allow create: if docId == 'bootstrap'
+        && isSignedIn()
+        && !exists(/databases/$(database)/documents/appMeta/bootstrap)
+        && isValidBootstrap(incoming())
+        && incoming().adminUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update, delete: if false;
     }
 
-    // Validation Blueprint: WorkspaceInvite
-    function isValidWorkspaceInvite(data, inviteCode) {
-      return data.keys().hasAll([
-          'inviteCode', 'workspaceId', 'workspaceName', 'ownerId', 'active', 'createdAt', 'updatedAt'
-        ])
-        && data.keys().hasOnly([
-          'inviteCode', 'workspaceId', 'workspaceName', 'ownerId', 'active', 'createdAt', 'updatedAt'
-        ])
-        && isValidInviteCode(data.inviteCode)
-        && data.inviteCode == inviteCode
-        && isValidId(data.workspaceId)
-        && data.workspaceName is string && data.workspaceName.size() >= 1 && data.workspaceName.size() <= 120
-        && isValidId(data.ownerId)
-        && data.active is bool
-        && data.createdAt is timestamp
-        && data.updatedAt is timestamp;
-    }
-
-    // Validation Blueprint: WorkspaceClinicalCase
-    function isValidWorkspaceCase(data, caseId, workspaceId) {
-      return data.keys().hasAll([
-          'id', 'workspaceId', 'ownerId', 'lastEditedByEmail', 'memberUids', 'memberEmails',
-          'caseCode', 'surgeryDate', 'primaryDiagnosis', 'surgeryType', 'complexityGrade',
-          'totalLundMackayScore', 'clientCreatedAt', 'clientUpdatedAt', 'deleted',
-          'createdAt', 'updatedAt', 'casePayload'
-        ])
-        && data.keys().hasOnly([
-          'id', 'workspaceId', 'ownerId', 'lastEditedByEmail', 'memberUids', 'memberEmails',
-          'caseCode', 'surgeryDate', 'primaryDiagnosis', 'surgeryType', 'complexityGrade',
-          'totalLundMackayScore', 'clientCreatedAt', 'clientUpdatedAt', 'deleted',
-          'createdAt', 'updatedAt', 'casePayload'
-        ])
-        && isValidId(data.id)
-        && data.id == caseId
-        && isValidId(data.workspaceId)
-        && data.workspaceId == workspaceId
-        && isValidId(data.ownerId)
-        && data.lastEditedByEmail is string && data.lastEditedByEmail.size() <= 320
-        && isValidMemberArrays(data)
-        && data.caseCode is string && data.caseCode.size() >= 1 && data.caseCode.size() <= 64
-        && data.surgeryDate is string && data.surgeryDate.size() <= 20 && data.surgeryDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
-        && data.primaryDiagnosis is string && data.primaryDiagnosis.size() <= 500
-        && data.surgeryType is string && data.surgeryType.size() <= 300
-        && data.complexityGrade is string && data.complexityGrade.size() <= 120
-        && data.totalLundMackayScore is number && data.totalLundMackayScore >= 0 && data.totalLundMackayScore <= 24
-        && data.clientCreatedAt is number
-        && data.clientUpdatedAt is number
-        && data.deleted is bool
-        && data.createdAt is timestamp
-        && data.updatedAt is timestamp
-        && isValidCasePayload(data.casePayload);
-    }
-
-    // Validation Blueprint: WorkspaceCaseImage
-    function isValidWorkspaceCaseImage(data, imageId, caseId, workspaceId) {
-      return data.keys().hasAll([
-          'id', 'workspaceId', 'ownerId', 'caseId', 'memberUids', 'memberEmails',
-          'type', 'timing', 'title', 'notes', 'dataUrl', 'uploadedAt',
-          'deleted', 'createdAt', 'updatedAt'
-        ])
-        && data.keys().hasOnly([
-          'id', 'workspaceId', 'ownerId', 'caseId', 'memberUids', 'memberEmails',
-          'type', 'timing', 'title', 'notes', 'dataUrl', 'uploadedAt',
-          'deleted', 'createdAt', 'updatedAt'
-        ])
-        && isValidId(data.id)
-        && data.id == imageId
-        && isValidId(data.workspaceId)
-        && data.workspaceId == workspaceId
-        && isValidId(data.ownerId)
-        && isValidId(data.caseId)
-        && data.caseId == caseId
-        && isValidMemberArrays(data)
-        && data.type in ['CT_SCAN', 'ENDOSCOPY']
-        && data.timing in ['PRE_OP', 'POST_OP']
-        && data.title is string && data.title.size() <= 200
-        && data.notes is string && data.notes.size() <= 1000
-        && data.dataUrl is string && data.dataUrl.size() <= 750000
-        && data.uploadedAt is number
-        && data.deleted is bool
-        && data.createdAt is timestamp
-        && data.updatedAt is timestamp;
-    }
-
-    // Private User Workspace Profile
-    match /users/{userId} {
+    // Authoritative Admin Markers
+    match /admins/{userId} {
       allow get: if isOwner(userId) && isValidId(userId);
       allow list: if false;
-      allow create: if isEmailVerified()
-        && isOwner(userId)
+      allow create: if isOwner(userId)
         && isValidId(userId)
-        && isValidUserProfile(incoming(), userId)
+        && isValidAdminMarker(incoming(), userId)
+        && !exists(/databases/$(database)/documents/admins/$(userId))
+        && getAfter(/databases/$(database)/documents/appMeta/bootstrap).data.adminUid == userId
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
-      allow update: if isEmailVerified()
-        && isOwner(userId)
+      allow update, delete: if false;
+    }
+
+    // Self-Created Accounts (Admin + Admin-created Guests)
+    match /accounts/{userId} {
+      allow get: if isSignedIn()
         && isValidId(userId)
-        && isValidUserProfile(incoming(), userId)
-        && incoming().uid == existing().uid
-        && incoming().createdAt == existing().createdAt
-        && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'photoURL', 'activeWorkspaceId', 'updatedAt']);
-      allow delete: if isEmailVerified() && isOwner(userId) && isValidId(userId);
-
-      // Personal Clinical Cases Collection
-      match /cases/{caseId} {
-        allow get: if isOwner(userId) && isValidId(caseId);
-        allow list: if isSignedIn() && isOwner(userId) && resource.data.ownerId == request.auth.uid;
-        allow create: if isEmailVerified()
-          && isOwner(userId)
-          && isValidId(caseId)
-          && isValidClinicalCase(incoming(), caseId)
-          && incoming().createdAt == request.time
-          && incoming().updatedAt == request.time;
-        allow update: if isEmailVerified()
-          && isOwner(userId)
-          && isValidId(caseId)
-          && isValidClinicalCase(incoming(), caseId)
-          && incoming().id == existing().id
-          && incoming().ownerId == existing().ownerId
-          && incoming().createdAt == existing().createdAt
-          && incoming().clientCreatedAt == existing().clientCreatedAt
-          && incoming().updatedAt == request.time
-          && (
-            (incoming().deleted == false && incoming().diff(existing()).affectedKeys().hasOnly([
-              'caseCode', 'surgeryDate', 'primaryDiagnosis', 'surgeryType',
-              'complexityGrade', 'totalLundMackayScore', 'clientUpdatedAt',
-              'deleted', 'updatedAt', 'casePayload'
-            ])) ||
-            (incoming().deleted == true && incoming().diff(existing()).affectedKeys().hasOnly([
-              'deleted', 'clientUpdatedAt', 'updatedAt'
-            ]))
-          );
-        allow delete: if isEmailVerified() && isOwner(userId) && isValidId(caseId);
-
-        // Personal Case Images Subcollection
-        match /images/{imageId} {
-          allow get: if isOwner(userId) && isValidId(caseId) && isValidId(imageId);
-          allow list: if isSignedIn() && isOwner(userId) && resource.data.ownerId == request.auth.uid;
-          allow create: if isEmailVerified()
-            && isOwner(userId)
-            && isValidId(caseId)
-            && isValidId(imageId)
-            && isValidCaseImage(incoming(), imageId, caseId)
-            && incoming().createdAt == request.time
-            && incoming().updatedAt == request.time
-            && exists(/databases/$(database)/documents/users/$(userId)/cases/$(caseId))
-            && get(/databases/$(database)/documents/users/$(userId)/cases/$(caseId)).data.ownerId == request.auth.uid;
-          allow update: if isEmailVerified()
-            && isOwner(userId)
-            && isValidId(caseId)
-            && isValidId(imageId)
-            && isValidCaseImage(incoming(), imageId, caseId)
-            && incoming().id == existing().id
-            && incoming().ownerId == existing().ownerId
-            && incoming().caseId == existing().caseId
-            && incoming().createdAt == existing().createdAt
-            && incoming().updatedAt == request.time
-            && exists(/databases/$(database)/documents/users/$(userId)/cases/$(caseId))
-            && get(/databases/$(database)/documents/users/$(userId)/cases/$(caseId)).data.ownerId == request.auth.uid
-            && (
-              (incoming().deleted == false && incoming().diff(existing()).affectedKeys().hasOnly([
-                'type', 'timing', 'title', 'notes', 'dataUrl', 'uploadedAt', 'deleted', 'updatedAt'
-              ])) ||
-              (incoming().deleted == true && incoming().diff(existing()).affectedKeys().hasOnly([
-                'deleted', 'dataUrl', 'updatedAt'
-              ]))
-            );
-          allow delete: if isEmailVerified() && isOwner(userId) && isValidId(caseId) && isValidId(imageId);
-        }
-      }
-    }
-
-    // Invite Code Lookup Records (Single-get only, zero enumeration)
-    match /workspaceInvites/{inviteCode} {
-      allow get: if isEmailVerified() && isValidInviteCode(inviteCode);
-      allow list: if false;
-      allow create: if isEmailVerified()
-        && isValidInviteCode(inviteCode)
-        && isValidWorkspaceInvite(incoming(), inviteCode)
-        && incoming().ownerId == request.auth.uid
+        && (request.auth.uid == userId || existing().adminUid == request.auth.uid);
+      allow list: if isSignedIn() && resource.data.adminUid == request.auth.uid;
+      allow create: if isSignedIn()
+        && isValidId(userId)
+        && isValidAppAccount(incoming(), userId)
         && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time
-        && exists(/databases/$(database)/documents/workspaces/$(incoming().workspaceId))
-        && get(/databases/$(database)/documents/workspaces/$(incoming().workspaceId)).data.ownerId == request.auth.uid;
-      allow update: if isEmailVerified()
-        && isValidInviteCode(inviteCode)
-        && isValidWorkspaceInvite(incoming(), inviteCode)
-        && existing().ownerId == request.auth.uid
-        && incoming().ownerId == existing().ownerId
-        && incoming().workspaceId == existing().workspaceId
-        && incoming().inviteCode == existing().inviteCode
-        && incoming().createdAt == existing().createdAt
-        && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly(['workspaceName', 'active', 'updatedAt']);
-      allow delete: if isEmailVerified() && isValidInviteCode(inviteCode) && existing().ownerId == request.auth.uid;
-    }
-
-    // Multi-Account Shared Workspaces
-    match /workspaces/{workspaceId} {
-      allow get: if isEmailVerified() && isValidId(workspaceId) && isDocMember(existing());
-      allow list: if isEmailVerified() && isDocMember(resource.data);
-      allow create: if isEmailVerified()
-        && isValidId(workspaceId)
-        && isValidWorkspace(incoming(), workspaceId)
-        && incoming().ownerId == request.auth.uid
-        && request.auth.uid in incoming().memberUids
-        && request.auth.token.email is string
-        && request.auth.token.email in incoming().memberEmails
-        && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time;
-      allow update: if isEmailVerified()
-        && isValidId(workspaceId)
-        && isValidWorkspace(incoming(), workspaceId)
-        && incoming().id == existing().id
-        && incoming().ownerId == existing().ownerId
-        && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Action 1: Owner updates workspace name, invite code, or member lists (cannot remove self)
+          // First-run atomic Admin bootstrap
           (
-            existing().ownerId == request.auth.uid
-            && existing().ownerId in incoming().memberUids
-            && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'inviteCode', 'memberUids', 'memberEmails', 'updatedAt'])
+            request.auth.uid == userId
+            && incoming().role == 'admin'
+            && incoming().adminUid == userId
+            && incoming().active == true
+            && existsAfter(/databases/$(database)/documents/admins/$(userId))
+            && getAfter(/databases/$(database)/documents/appMeta/bootstrap).data.adminUid == userId
           ) ||
-          // Action 2: Invited member (by email or valid active inviteCode) appends self without removing anyone
+          // Admin creating a Guest account
           (
-            incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'memberEmails', 'updatedAt'])
-            && incoming().memberUids.hasAll(existing().memberUids)
-            && incoming().memberEmails.hasAll(existing().memberEmails)
-            && incoming().memberUids.size() <= existing().memberUids.size() + 1
-            && incoming().memberEmails.size() <= existing().memberEmails.size() + 1
-            && request.auth.uid in incoming().memberUids
-            && request.auth.token.email is string
-            && request.auth.token.email in incoming().memberEmails
+            isAdmin()
+            && incoming().role == 'guest'
+            && incoming().adminUid == request.auth.uid
+          )
+        );
+      allow update: if isAdmin()
+        && isValidId(userId)
+        && existing().adminUid == request.auth.uid
+        && isValidAppAccount(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().role == existing().role
+        && incoming().adminUid == existing().adminUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'active', 'updatedAt']);
+      allow delete: if isAdmin()
+        && isValidId(userId)
+        && existing().adminUid == request.auth.uid
+        && existing().role == 'guest';
+    }
+
+    // Shared Clinic Cases (Active + Admin Trash)
+    match /clinicCases/{caseId} {
+      allow get: if isSignedIn()
+        && isValidId(caseId)
+        && (
+          (isAdmin() && existing().adminUid == request.auth.uid) ||
+          (isActiveAccount()
+            && request.auth.uid in existing().authorizedUids
+            && existing().isTrashed == false
+            && existing().deleted == false)
+        );
+      allow list: if isSignedIn()
+        && (
+          resource.data.adminUid == request.auth.uid ||
+          (
+            request.auth.uid in resource.data.authorizedUids
+            && resource.data.isTrashed == false
+            && resource.data.deleted == false
+          )
+        );
+      allow create: if isSignedIn()
+        && isActiveAccount()
+        && isValidId(caseId)
+        && isValidClinicCase(incoming(), caseId)
+        && incoming().ownerId == request.auth.uid
+        && incoming().adminUid == accountData().adminUid
+        && request.auth.uid in incoming().authorizedUids
+        && incoming().deleted == false
+        && incoming().isTrashed == false
+        && incoming().trashedAt == null
+        && incoming().trashedBy == null
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn()
+        && isActiveAccount()
+        && isValidId(caseId)
+        && isValidClinicCase(incoming(), caseId)
+        && incoming().id == existing().id
+        && incoming().adminUid == existing().adminUid
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().clientCreatedAt == existing().clientCreatedAt
+        && incoming().updatedAt == request.time
+        && (
+          // Admin: full edit, trash, restore, permanent tombstone, or permission sync
+          (
+            isAdmin()
+            && existing().adminUid == request.auth.uid
             && (
-              request.auth.token.email in existing().memberEmails ||
+              (incoming().deleted == false && incoming().diff(existing()).affectedKeys().hasOnly([
+                'lastEditedBy', 'authorizedUids', 'isTrashed', 'trashedAt', 'trashedBy',
+                'caseCode', 'surgeryDate', 'primaryDiagnosis', 'surgeryType',
+                'complexityGrade', 'totalLundMackayScore', 'clientUpdatedAt',
+                'deleted', 'updatedAt', 'casePayload'
+              ])) ||
+              (incoming().deleted == true && incoming().diff(existing()).affectedKeys().hasOnly([
+                'lastEditedBy', 'isTrashed', 'trashedAt', 'trashedBy', 'deleted', 'clientUpdatedAt', 'updatedAt'
+              ])) ||
+              (incoming().diff(existing()).affectedKeys().hasOnly([
+                'authorizedUids', 'updatedAt'
+              ]))
+            )
+          ) ||
+          // Guest: edit active case OR move active case to Admin Trash (cannot restore or permanently delete)
+          (
+            !isAdmin()
+            && existing().adminUid == accountData().adminUid
+            && request.auth.uid in existing().authorizedUids
+            && existing().isTrashed == false
+            && existing().deleted == false
+            && incoming().deleted == false
+            && incoming().authorizedUids == existing().authorizedUids
+            && (
               (
-                exists(/databases/$(database)/documents/workspaceInvites/$(existing().inviteCode))
-                && get(/databases/$(database)/documents/workspaceInvites/$(existing().inviteCode)).data.workspaceId == workspaceId
-                && get(/databases/$(database)/documents/workspaceInvites/$(existing().inviteCode)).data.active == true
+                incoming().isTrashed == false
+                && incoming().trashedAt == null
+                && incoming().trashedBy == null
+                && incoming().diff(existing()).affectedKeys().hasOnly([
+                  'lastEditedBy', 'caseCode', 'surgeryDate', 'primaryDiagnosis',
+                  'surgeryType', 'complexityGrade', 'totalLundMackayScore',
+                  'clientUpdatedAt', 'updatedAt', 'casePayload'
+                ])
+              ) ||
+              (
+                incoming().isTrashed == true
+                && incoming().trashedAt is number
+                && incoming().trashedBy is string
+                && incoming().diff(existing()).affectedKeys().hasOnly([
+                  'lastEditedBy', 'isTrashed', 'trashedAt', 'trashedBy', 'clientUpdatedAt', 'updatedAt'
+                ])
               )
             )
           )
         );
-      allow delete: if isEmailVerified() && isValidId(workspaceId) && existing().ownerId == request.auth.uid;
+      allow delete: if isAdmin() && isValidId(caseId) && existing().adminUid == request.auth.uid;
 
-      // Shared Workspace Cases Subcollection
-      match /cases/{caseId} {
-        allow get: if isEmailVerified()
-          && isValidId(workspaceId)
+      // Clinical Images Subcollection
+      match /images/{imageId} {
+        allow get: if isSignedIn()
           && isValidId(caseId)
+          && isValidId(imageId)
           && (
-            isDocMember(existing()) ||
-            (
-              exists(/databases/$(database)/documents/workspaces/$(workspaceId))
-              && isDocMember(get(/databases/$(database)/documents/workspaces/$(workspaceId)).data)
-            )
+            (isAdmin() && existing().adminUid == request.auth.uid) ||
+            (isActiveAccount() && request.auth.uid in existing().authorizedUids)
           );
-        allow list: if isEmailVerified() && isDocMember(resource.data);
-        allow create: if isEmailVerified()
-          && isValidId(workspaceId)
+        allow list: if isSignedIn()
+          && (
+            resource.data.adminUid == request.auth.uid ||
+            request.auth.uid in resource.data.authorizedUids
+          );
+        allow create: if isSignedIn()
+          && isActiveAccount()
           && isValidId(caseId)
-          && isValidWorkspaceCase(incoming(), caseId, workspaceId)
+          && isValidId(imageId)
+          && isValidClinicCaseImage(incoming(), imageId, caseId)
           && incoming().ownerId == request.auth.uid
+          && incoming().adminUid == accountData().adminUid
+          && request.auth.uid in incoming().authorizedUids
           && incoming().createdAt == request.time
           && incoming().updatedAt == request.time
-          && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
-          && isDocMember(get(/databases/$(database)/documents/workspaces/$(workspaceId)).data);
-        allow update: if isEmailVerified()
-          && isValidId(workspaceId)
-          && isValidId(caseId)
-          && isValidWorkspaceCase(incoming(), caseId, workspaceId)
-          && incoming().id == existing().id
-          && incoming().workspaceId == existing().workspaceId
-          && incoming().ownerId == existing().ownerId
-          && incoming().createdAt == existing().createdAt
-          && incoming().clientCreatedAt == existing().clientCreatedAt
-          && incoming().updatedAt == request.time
-          && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
-          && isDocMember(get(/databases/$(database)/documents/workspaces/$(workspaceId)).data)
+          && exists(/databases/$(database)/documents/clinicCases/$(caseId))
+          && get(/databases/$(database)/documents/clinicCases/$(caseId)).data.adminUid == incoming().adminUid
+          && get(/databases/$(database)/documents/clinicCases/$(caseId)).data.isTrashed == false
+          && get(/databases/$(database)/documents/clinicCases/$(caseId)).data.deleted == false
           && (
-            (incoming().deleted == false && incoming().diff(existing()).affectedKeys().hasOnly([
-              'lastEditedByEmail', 'memberUids', 'memberEmails', 'caseCode', 'surgeryDate',
-              'primaryDiagnosis', 'surgeryType', 'complexityGrade', 'totalLundMackayScore',
-              'clientUpdatedAt', 'deleted', 'updatedAt', 'casePayload'
-            ])) ||
-            (incoming().deleted == true && incoming().diff(existing()).affectedKeys().hasOnly([
-              'lastEditedByEmail', 'deleted', 'clientUpdatedAt', 'updatedAt'
-            ])) ||
-            (incoming().diff(existing()).affectedKeys().hasOnly([
-              'memberUids', 'memberEmails', 'updatedAt'
-            ]))
+            isAdmin() ||
+            request.auth.uid in get(/databases/$(database)/documents/clinicCases/$(caseId)).data.authorizedUids
           );
-        allow delete: if isEmailVerified()
-          && isValidId(workspaceId)
+        allow update: if isSignedIn()
+          && isActiveAccount()
           && isValidId(caseId)
-          && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
-          && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid;
-
-        // Shared Workspace Case Images Subcollection
-        match /images/{imageId} {
-          allow get: if isEmailVerified()
-            && isValidId(workspaceId)
-            && isValidId(caseId)
-            && isValidId(imageId)
-            && (
-              isDocMember(existing()) ||
-              (
-                exists(/databases/$(database)/documents/workspaces/$(workspaceId))
-                && isDocMember(get(/databases/$(database)/documents/workspaces/$(workspaceId)).data)
+          && isValidId(imageId)
+          && isValidClinicCaseImage(incoming(), imageId, caseId)
+          && incoming().id == existing().id
+          && incoming().adminUid == existing().adminUid
+          && incoming().ownerId == existing().ownerId
+          && incoming().caseId == existing().caseId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/clinicCases/$(caseId))
+          && (
+            (
+              isAdmin()
+              && existing().adminUid == request.auth.uid
+              && (
+                (incoming().deleted == false && incoming().diff(existing()).affectedKeys().hasOnly([
+                  'authorizedUids', 'type', 'timing', 'title', 'notes', 'dataUrl', 'uploadedAt', 'deleted', 'updatedAt'
+                ])) ||
+                (incoming().deleted == true && incoming().diff(existing()).affectedKeys().hasOnly([
+                  'deleted', 'dataUrl', 'updatedAt'
+                ])) ||
+                (incoming().diff(existing()).affectedKeys().hasOnly([
+                  'authorizedUids', 'updatedAt'
+                ]))
               )
-            );
-          allow list: if isEmailVerified() && isDocMember(resource.data);
-          allow create: if isEmailVerified()
-            && isValidId(workspaceId)
-            && isValidId(caseId)
-            && isValidId(imageId)
-            && isValidWorkspaceCaseImage(incoming(), imageId, caseId, workspaceId)
-            && incoming().ownerId == request.auth.uid
-            && incoming().createdAt == request.time
-            && incoming().updatedAt == request.time
-            && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/cases/$(caseId))
-            && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
-            && isDocMember(get(/databases/$(database)/documents/workspaces/$(workspaceId)).data);
-          allow update: if isEmailVerified()
-            && isValidId(workspaceId)
-            && isValidId(caseId)
-            && isValidId(imageId)
-            && isValidWorkspaceCaseImage(incoming(), imageId, caseId, workspaceId)
-            && incoming().id == existing().id
-            && incoming().workspaceId == existing().workspaceId
-            && incoming().ownerId == existing().ownerId
-            && incoming().caseId == existing().caseId
-            && incoming().createdAt == existing().createdAt
-            && incoming().updatedAt == request.time
-            && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/cases/$(caseId))
-            && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
-            && isDocMember(get(/databases/$(database)/documents/workspaces/$(workspaceId)).data)
-            && (
-              (incoming().deleted == false && incoming().diff(existing()).affectedKeys().hasOnly([
-                'memberUids', 'memberEmails', 'type', 'timing', 'title', 'notes',
-                'dataUrl', 'uploadedAt', 'deleted', 'updatedAt'
-              ])) ||
-              (incoming().deleted == true && incoming().diff(existing()).affectedKeys().hasOnly([
-                'deleted', 'dataUrl', 'updatedAt'
-              ])) ||
-              (incoming().diff(existing()).affectedKeys().hasOnly([
-                'memberUids', 'memberEmails', 'updatedAt'
-              ]))
-            );
-          allow delete: if isEmailVerified()
-            && isValidId(workspaceId)
-            && isValidId(caseId)
-            && isValidId(imageId)
-            && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
-            && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid;
-        }
+            ) ||
+            (
+              !isAdmin()
+              && existing().adminUid == accountData().adminUid
+              && request.auth.uid in existing().authorizedUids
+              && get(/databases/$(database)/documents/clinicCases/$(caseId)).data.isTrashed == false
+              && get(/databases/$(database)/documents/clinicCases/$(caseId)).data.deleted == false
+              && incoming().authorizedUids == existing().authorizedUids
+              && (
+                (incoming().deleted == false && incoming().diff(existing()).affectedKeys().hasOnly([
+                  'type', 'timing', 'title', 'notes', 'dataUrl', 'uploadedAt', 'deleted', 'updatedAt'
+                ])) ||
+                (incoming().deleted == true && incoming().diff(existing()).affectedKeys().hasOnly([
+                  'deleted', 'dataUrl', 'updatedAt'
+                ]))
+              )
+            )
+          );
+        allow delete: if isAdmin() && isValidId(caseId) && isValidId(imageId) && existing().adminUid == request.auth.uid;
       }
     }
   }
