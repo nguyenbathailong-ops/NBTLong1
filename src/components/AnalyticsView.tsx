@@ -1,13 +1,27 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { PatientCase } from '../types/medical';
-import { exportCasesToCsv, exportDeidentifiedCsv } from '../utils/exportTools';
-import { BarChart3, PieChart, TrendingUp, Users, Activity, Download } from 'lucide-react';
+import { exportDeidentifiedCsv } from '../utils/exportTools';
+import { useFirebaseSync } from '../contexts/FirebaseContext';
+import { AdminAiAnalyticsPanel } from './AdminAiAnalyticsPanel';
+import { BarChart3, Download, Sparkles } from 'lucide-react';
 
 interface AnalyticsViewProps {
   cases: PatientCase[];
+  initialMode?: 'stats' | 'ai';
 }
 
-export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ cases }) => {
+export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ cases, initialMode = 'stats' }) => {
+  const { isAdmin } = useFirebaseSync();
+  const [mode, setMode] = useState<'stats' | 'ai'>(isAdmin ? initialMode : 'stats');
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setMode('stats');
+    } else {
+      setMode(initialMode);
+    }
+  }, [isAdmin, initialMode]);
+
   const totalCases = cases.length;
 
   // Chandler Distribution
@@ -47,7 +61,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ cases }) => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
         <div>
           <span className="text-[10px] font-mono uppercase tracking-wider text-teal-400 font-bold">
-            KẾT QUẢ & THỐNG KÊ
+            KẾT QUẢ &amp; THỐNG KÊ
           </span>
           <h2 className="text-xl font-serif font-bold text-white tracking-tight">
             Phân Tích Đa Biến Số Nghiên Cứu Lâm Sàng
@@ -57,18 +71,50 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ cases }) => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {isAdmin && (
+            <div className="flex items-center rounded-lg bg-slate-900 border border-slate-700 p-0.5">
+              <button
+                type="button"
+                onClick={() => setMode('stats')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer ${
+                  mode === 'stats'
+                    ? 'bg-teal-500/25 text-teal-300'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <BarChart3 className="w-3.5 h-3.5" />
+                <span>Thống kê</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode('ai')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer ${
+                  mode === 'ai'
+                    ? 'bg-amber-500/25 text-amber-300'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Phân tích AI (Admin)</span>
+              </button>
+            </div>
+          )}
+
           <button
             type="button"
             onClick={() => exportDeidentifiedCsv(cases)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/40 text-xs font-semibold transition"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/40 text-xs font-semibold transition cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" /> Xuất tập dữ liệu nghiên cứu (CSV)
           </button>
         </div>
       </div>
 
-      {/* KPI stats */}
+      {isAdmin && mode === 'ai' ? (
+        <AdminAiAnalyticsPanel cases={cases} />
+      ) : (
+        <>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="bg-[#0a1120] border border-slate-800 rounded-xl p-4 space-y-1">
           <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
@@ -233,6 +279,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ cases }) => {
           </div>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 };

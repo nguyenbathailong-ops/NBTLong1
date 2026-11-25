@@ -59,6 +59,7 @@ export interface AppAccount {
 export interface PatientCase {
   id: string; // Internal UUID
   caseCode: string; // Mã ca gia định danh (e.g. NT121124412)
+  patientName?: string; // Họ và tên bệnh nhân (quản lý nội bộ, ẩn khi khử định danh)
   surgeryDate: string; // YYYY-MM-DD
   createdAt: number;
   updatedAt: number;

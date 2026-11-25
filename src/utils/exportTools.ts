@@ -1,8 +1,10 @@
 import { PatientCase } from '../types/medical';
 
 export function exportCasesToCsv(cases: PatientCase[]): void {
+  const esc = (v?: string | null) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const headers = [
     'Mã ca',
+    'Tên bệnh nhân',
     'Ngày mổ',
     'Tuổi',
     'Giới tính',
@@ -91,7 +93,8 @@ export function exportCasesToCsv(cases: PatientCase[]): void {
   ];
 
   const rows = cases.map((c) => [
-    `"${c.caseCode}"`,
+    esc(c.caseCode),
+    esc(c.patientName),
     `"${c.surgeryDate}"`,
     c.age ?? '',
     `"${c.gender}"`,
@@ -192,7 +195,7 @@ export function exportCasesToCsv(cases: PatientCase[]): void {
 }
 
 export function exportDeidentifiedCsv(cases: PatientCase[]): void {
-  // Removes identifying identifiers like specific names, dates replaced by year
+  // Strictly removes identifying identifiers (including patientName, caseCode, exact day)
   const headers = [
     'ID_NghienCuu',
     'NamMo',
@@ -278,7 +281,7 @@ export function exportHtmlReport(cases: PatientCase[]): void {
   <table>
     <thead>
       <tr>
-        <th>Mã ca</th>
+        <th>Mã ca / Bệnh nhân</th>
         <th>Tuổi / Giới</th>
         <th>Ngày mổ</th>
         <th>Chẩn đoán</th>
@@ -295,7 +298,7 @@ export function exportHtmlReport(cases: PatientCase[]): void {
         .map(
           (c) => `
         <tr>
-          <td><strong>${c.caseCode}</strong></td>
+          <td><strong>${c.caseCode}</strong>${c.patientName ? `<br/><span style="color:#475569;font-size:12px;">${c.patientName.replace(/[<>&"']/g, '')}</span>` : ''}</td>
           <td>${c.age ?? '-'} / ${c.gender}</td>
           <td>${c.surgeryDate}</td>
           <td>${c.primaryDiagnosis}</td>

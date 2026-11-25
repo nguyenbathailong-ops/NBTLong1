@@ -17,6 +17,7 @@ import {
   Shield,
   User as UserIcon,
   Trash2,
+  Sparkles,
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -25,6 +26,7 @@ interface DashboardProps {
   onAddNewCase: () => void;
   onOpenAudit: () => void;
   onOpenTrash: () => void;
+  onOpenAiAnalytics: () => void;
   onOpenSafetyModal: () => void;
   onOpenGuide: () => void;
   onSelectCase: (c: PatientCase) => void;
@@ -36,6 +38,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onAddNewCase,
   onOpenAudit,
   onOpenTrash,
+  onOpenAiAnalytics,
   onOpenSafetyModal,
   onOpenGuide,
   onSelectCase,
@@ -182,6 +185,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
               {isAdmin && (
                 <button
                   type="button"
+                  onClick={onOpenAiAnalytics}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 font-semibold text-xs transition cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Phân tích AI</span>
+                </button>
+              )}
+              {isAdmin && (
+                <button
+                  type="button"
                   onClick={onOpenSafetyModal}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-300 font-semibold text-xs transition cursor-pointer"
                 >
@@ -313,10 +326,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
               className="p-3.5 rounded-lg border border-slate-800 hover:border-teal-500/50 bg-[#0d1627] hover:bg-[#101b30] transition cursor-pointer flex items-center justify-between"
             >
               <div className="space-y-1">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-mono font-bold text-xs text-white">
                     {c.caseCode}
                   </span>
+                  {c.patientName && (
+                    <span className="text-xs font-semibold text-cyan-300">
+                      {c.patientName}
+                    </span>
+                  )}
                   <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-950/70 text-amber-300 border border-amber-800/60">
                     {c.auditStatus?.completionPercentage || 60}%
                   </span>
@@ -349,12 +367,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
       {/* Footer */}
       <div className="pt-8 pb-4 text-center text-xs text-slate-500 space-y-1">
         <p>
-          Phát triển bởi <strong className="text-slate-400">BS. Trần Tấn Đăng Khoa</strong>
+          Phát triển bởi <strong className="text-slate-400">BS. Nguyễn Bá Thái Long</strong> được lấy cảm hứng từ{' '}
+          <strong className="text-slate-400">BS. Trần Tấn Đăng Khoa</strong>
         </p>
         <p>
           Góp ý gửi về{' '}
-          <a href="mailto:drkhoa96@gmail.com" className="text-cyan-400 hover:underline">
-            drkhoa96@gmail.com
+          <a href="mailto:nguyenbathailong@gmail.com" className="text-cyan-400 hover:underline">
+            nguyenbathailong@gmail.com
           </a>
         </p>
         <p className="text-[11px] font-mono text-slate-600">phiên bản v2.25.0 — Offline-First PWA</p>

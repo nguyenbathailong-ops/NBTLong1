@@ -52,7 +52,7 @@ export const StepPatient: React.FC<StepPatientProps> = ({ data, onChange }) => {
       {/* Basic identifiers row */}
       <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
         {/* Mã ca */}
-        <div className="sm:col-span-6 space-y-1.5">
+        <div className="sm:col-span-4 space-y-1.5">
           <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300">
             MÃ CA (GIA ĐỊNH DANH) <span className="text-rose-400">*</span>
           </label>
@@ -65,12 +65,30 @@ export const StepPatient: React.FC<StepPatientProps> = ({ data, onChange }) => {
             className="w-full bg-[#0a1120] border border-slate-700 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 rounded-lg px-3.5 py-2.5 text-sm text-slate-100 font-mono"
           />
           <p className="text-[11px] text-slate-500">
-            Mã định danh bảo mật ca bệnh không để lộ tên thật.
+            Mã định danh bảo mật khi xuất nghiên cứu.
+          </p>
+        </div>
+
+        {/* Tên bệnh nhân */}
+        <div className="sm:col-span-4 space-y-1.5">
+          <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300">
+            TÊN BỆNH NHÂN (HỌ VÀ TÊN)
+          </label>
+          <input
+            type="text"
+            maxLength={160}
+            value={data.patientName || ''}
+            onChange={(e) => onChange({ patientName: e.target.value })}
+            placeholder="VD: Nguyễn Văn A"
+            className="w-full bg-[#0a1120] border border-slate-700 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 rounded-lg px-3.5 py-2.5 text-sm text-slate-100"
+          />
+          <p className="text-[11px] text-slate-500">
+            Quản lý nội bộ; tự ẩn khi xuất CSV khử định danh &amp; AI.
           </p>
         </div>
 
         {/* Tuổi */}
-        <div className="sm:col-span-3 space-y-1.5">
+        <div className="sm:col-span-2 space-y-1.5">
           <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300">
             TUỔI <span className="text-rose-400">*</span>
           </label>
@@ -86,7 +104,7 @@ export const StepPatient: React.FC<StepPatientProps> = ({ data, onChange }) => {
         </div>
 
         {/* Giới */}
-        <div className="sm:col-span-3 space-y-1.5">
+        <div className="sm:col-span-2 space-y-1.5">
           <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300">
             GIỚI <span className="text-rose-400">*</span>
           </label>

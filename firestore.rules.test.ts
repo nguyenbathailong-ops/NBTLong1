@@ -56,4 +56,9 @@ describe('RHINOLOG Firestore Security Rules (Admin/Guest RBAC + Trash)', () => {
     assert.ok(rulesContent.includes('(resource == null && isActiveAccount())'));
     assert.ok(rulesContent.includes('(resource != null && existing().adminUid == request.auth.uid)'));
   });
+
+  it('permits optional patientName inside casePayload with length cap', () => {
+    assert.ok(rulesContent.includes("'patientName'"));
+    assert.ok(rulesContent.includes("isOptionalString(payload, 'patientName', 160)"));
+  });
 });

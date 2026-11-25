@@ -15,6 +15,7 @@ import {
   Shield,
   User as UserIcon,
   Trash2,
+  Sparkles,
 } from 'lucide-react';
 
 export type AppTab =
@@ -22,6 +23,7 @@ export type AppTab =
   | 'cases'
   | 'reconciliation'
   | 'analytics'
+  | 'ai'
   | 'knowledge'
   | 'trash'
   | 'security';
@@ -162,6 +164,21 @@ export const Header: React.FC<HeaderProps> = ({
             <BarChart3 className="w-3.5 h-3.5" />
             <span>Kết quả</span>
           </button>
+
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => onSelectTab('ai')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer shrink-0 ${
+                currentTab === 'ai'
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50'
+                  : 'text-amber-300/80 hover:text-amber-200 hover:bg-slate-900'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>Phân tích AI</span>
+            </button>
+          )}
 
           <button
             type="button"

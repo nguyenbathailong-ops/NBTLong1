@@ -112,13 +112,14 @@ service cloud.firestore {
           'treatmentFeatures'
         ])
         && payload.keys().hasOnly([
-          'age', 'gender', 'address', 'provinceDetails', 'ethnicity', 'occupation',
+          'patientName', 'age', 'gender', 'address', 'provinceDetails', 'ethnicity', 'occupation',
           'comorbidities', 'admissionReasons', 'symptomDurationDays',
           'treatmentBeforeAdmission', 'priorTreatmentDetails', 'nasalSymptoms',
           'eyeSymptoms', 'neurologicalSymptoms', 'vitalSigns', 'labResults',
           'diseaseExtent', 'lundMackay', 'nasalPolypScoreR', 'nasalPolypScoreL',
           'snot22Score', 'treatmentFeatures', 'auditStatus'
         ])
+        && isOptionalString(payload, 'patientName', 160)
         && isOptionalNumber(payload, 'age')
         && payload.gender is string && payload.gender.size() <= 20
         && payload.address is string && payload.address.size() <= 40

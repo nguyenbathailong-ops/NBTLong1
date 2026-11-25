@@ -189,7 +189,7 @@
         },
         "casePayload": {
           "type": "object",
-          "description": "Structured clinical variables covering epidemiology, symptoms, vitals, labs, Lund-Mackay, and treatment."
+          "description": "Structured clinical variables covering epidemiology (including optional internal patientName), symptoms, vitals, labs, Lund-Mackay, and treatment."
         }
       },
       "required": [

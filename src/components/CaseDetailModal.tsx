@@ -20,10 +20,15 @@ export const CaseDetailModal: React.FC<CaseDetailModalProps> = ({
       <div className="relative w-full max-w-4xl bg-[#090f1d] border border-slate-700 rounded-2xl shadow-2xl overflow-hidden text-slate-100 flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-[#0b111e]">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <span className="font-mono font-bold text-sm bg-teal-950 text-teal-400 border border-teal-800 px-2.5 py-1 rounded">
               {caseItem.caseCode}
             </span>
+            {caseItem.patientName && (
+              <span className="text-sm font-bold text-cyan-300">
+                {caseItem.patientName}
+              </span>
+            )}
             <h2 className="text-base font-bold text-white">
               {caseItem.primaryDiagnosis}
             </h2>
@@ -55,8 +60,11 @@ export const CaseDetailModal: React.FC<CaseDetailModalProps> = ({
           {/* Row 1: Demographics & Surgery summary */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 rounded-xl bg-slate-900/60 border border-slate-800">
             <div>
-              <span className="text-slate-500 uppercase font-semibold text-[10px] block">Tuổi / Giới tính</span>
-              <span className="text-sm font-bold text-slate-200">{caseItem.age ?? '-'} tuổi / {caseItem.gender}</span>
+              <span className="text-slate-500 uppercase font-semibold text-[10px] block">Bệnh nhân / Tuổi / Giới</span>
+              <span className="text-sm font-bold text-slate-200">
+                {caseItem.patientName ? `${caseItem.patientName} · ` : ''}
+                {caseItem.age ?? '-'} tuổi / {caseItem.gender}
+              </span>
             </div>
             <div>
               <span className="text-slate-500 uppercase font-semibold text-[10px] block">Địa chỉ & Dân tộc</span>

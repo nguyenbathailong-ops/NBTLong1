@@ -29,6 +29,7 @@ export const db = new RhinologDatabase();
 export const sampleCase1: PatientCase = {
   id: 'c1-nt1231231',
   caseCode: 'nt1231231',
+  patientName: 'Nguyễn Văn A',
   surgeryDate: '2026-10-04',
   createdAt: Date.now() - 3600 * 24 * 1000,
   updatedAt: Date.now(),
@@ -199,6 +200,7 @@ export const sampleCase1: PatientCase = {
 export const sampleCase2: PatientCase = {
   id: 'c2-nt121124412',
   caseCode: 'NT121124412',
+  patientName: 'Trần Minh B',
   surgeryDate: '2026-10-05',
   createdAt: Date.now() - 3600 * 12 * 1000,
   updatedAt: Date.now(),
@@ -379,6 +381,7 @@ export function createBlankCase(): PatientCase {
   const blank: PatientCase = {
     id: newId,
     caseCode: autoCode,
+    patientName: '',
     surgeryDate: dateStr,
     createdAt: Date.now(),
     updatedAt: Date.now(),

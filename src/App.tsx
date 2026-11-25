@@ -50,9 +50,9 @@ function AppContent({ cases, loading, reloadCases }: AppContentProps) {
     [cases, isAdmin]
   );
 
-  // If a user logs out or switches to Guest while on the Trash tab, return to dashboard
+  // If a user logs out or switches to Guest while on Admin-only tabs, return to dashboard
   useEffect(() => {
-    if (currentTab === 'trash' && !isAdmin) {
+    if ((currentTab === 'trash' || currentTab === 'ai') && !isAdmin) {
       setCurrentTab('dashboard');
     }
   }, [currentTab, isAdmin]);
@@ -157,6 +157,7 @@ function AppContent({ cases, loading, reloadCases }: AppContentProps) {
                 onAddNewCase={handleAddNewCase}
                 onOpenAudit={() => setCurrentTab('reconciliation')}
                 onOpenTrash={() => setCurrentTab('trash')}
+                onOpenAiAnalytics={() => setCurrentTab('ai')}
                 onOpenSafetyModal={() => setShowSafetyModal(true)}
                 onOpenGuide={() => setShowGuideModal(true)}
                 onSelectCase={(c) => setViewingCase(c)}
@@ -182,7 +183,9 @@ function AppContent({ cases, loading, reloadCases }: AppContentProps) {
               />
             )}
 
-            {currentTab === 'analytics' && <AnalyticsView cases={activeCases} />}
+            {currentTab === 'analytics' && <AnalyticsView cases={activeCases} initialMode="stats" />}
+
+            {currentTab === 'ai' && isAdmin && <AnalyticsView cases={activeCases} initialMode="ai" />}
 
             {currentTab === 'knowledge' && <ClinicalKnowledge />}
 

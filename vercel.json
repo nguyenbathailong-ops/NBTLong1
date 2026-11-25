@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/*.ts": {
+      "maxDuration": 60,
+      "includeFiles": "firebase-applet-config.json"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/((?!api/|assets/|icon\\.svg|manifest\\.json|manifest\\.webmanifest|sw\\.js|workbox-.*\\.js).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

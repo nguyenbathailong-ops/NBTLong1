@@ -480,6 +480,7 @@ export async function removeGuestAccount(
 
 function buildCasePayload(c: PatientCase) {
   const payload = {
+    patientName: c.patientName?.trim() ? clampStr(c.patientName.trim(), 160) : null,
     age: typeof c.age === 'number' && !Number.isNaN(c.age) ? c.age : null,
     gender: clampStr(c.gender, 20, 'Nam'),
     address: clampStr(c.address, 40, 'TP HCM'),
@@ -993,6 +994,10 @@ function reconstructPatientCase(
   return {
     id: remoteData.id,
     caseCode: remoteData.caseCode,
+    patientName:
+      typeof payload.patientName === 'string' && payload.patientName.trim()
+        ? payload.patientName
+        : undefined,
     surgeryDate: remoteData.surgeryDate,
     createdAt: remoteData.clientCreatedAt || Date.now(),
     updatedAt: remoteData.clientUpdatedAt || Date.now(),

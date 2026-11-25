@@ -55,10 +55,11 @@ export const CaseList: React.FC<CaseListProps> = ({
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchCode = c.caseCode.toLowerCase().includes(q);
+      const matchName = (c.patientName || '').toLowerCase().includes(q);
       const matchDiagnosis = c.primaryDiagnosis.toLowerCase().includes(q);
       const matchSurgery = c.surgeryType.toLowerCase().includes(q);
       const matchAddress = c.address.toLowerCase().includes(q);
-      return matchCode || matchDiagnosis || matchSurgery || matchAddress;
+      return matchCode || matchName || matchDiagnosis || matchSurgery || matchAddress;
     }
     return true;
   });
@@ -141,7 +142,7 @@ export const CaseList: React.FC<CaseListProps> = ({
           <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
           <input
             type="text"
-            placeholder="Tìm kiếm mã ca, chẩn đoán, phẫu thuật..."
+            placeholder="Tìm kiếm mã ca, tên bệnh nhân, chẩn đoán, phẫu thuật..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-slate-900 border border-slate-800 rounded-lg pl-9 pr-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:border-teal-400"
@@ -212,7 +213,7 @@ export const CaseList: React.FC<CaseListProps> = ({
                 <th className="py-3 px-4 w-10">
                   <input type="checkbox" className="rounded border-slate-700 bg-slate-900" />
                 </th>
-                <th className="py-3 px-4">MÃ BA</th>
+                <th className="py-3 px-4">MÃ BA / BỆNH NHÂN</th>
                 <th className="py-3 px-4">TUỔI/GIỚI</th>
                 <th className="py-3 px-4">NGÀY</th>
                 <th className="py-3 px-4">GRADE</th>
@@ -248,22 +249,29 @@ export const CaseList: React.FC<CaseListProps> = ({
                         <input type="checkbox" className="rounded border-slate-700 bg-slate-900" />
                       </td>
 
-                      {/* Mã BA */}
+                      {/* Mã BA & Tên bệnh nhân */}
                       <td className="py-3 px-4">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold text-white group-hover:text-teal-400 transition">
-                            {c.caseCode}
-                          </span>
-                          <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-950/70 text-amber-300 border border-amber-700/60">
-                            📄 {pct}%
-                          </span>
-                          {c.syncedToCloud && (
-                            <span
-                              title="Đã đồng bộ lên Cloud"
-                              className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950/70 text-emerald-300 border border-emerald-800/60 flex items-center gap-0.5"
-                            >
-                              <Cloud className="w-2.5 h-2.5" />
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-white group-hover:text-teal-400 transition">
+                              {c.caseCode}
                             </span>
+                            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-950/70 text-amber-300 border border-amber-700/60">
+                              📄 {pct}%
+                            </span>
+                            {c.syncedToCloud && (
+                              <span
+                                title="Đã đồng bộ lên Cloud"
+                                className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950/70 text-emerald-300 border border-emerald-800/60 flex items-center gap-0.5"
+                              >
+                                <Cloud className="w-2.5 h-2.5" />
+                              </span>
+                            )}
+                          </div>
+                          {c.patientName && (
+                            <div className="text-[11px] font-medium text-slate-300 truncate max-w-[200px]">
+                              {c.patientName}
+                            </div>
                           )}
                         </div>
                       </td>
